@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Modération Cordial</title>
+<meta name="theme-color" content="#0b0828">
+<link rel="icon" type="image/png" href="/icons/favicon-64.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+:root {
+  --rail: #1e1f22; --side: #2b2d31; --main: #313338; --hover: #35373c; --active: #404249; --line: #3a3c42;
+  --fg: #dbdee1; --strong: #f2f3f5; --muted: #a0a6ae;
+  --accent: #5865f2; --accent-2: #4752c4; --ok: #23a55a; --warn: #f0b232; --bad: #f23f43; --bad-2: #c9282c;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --head: "Space Grotesk", "Inter", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--rail); color: var(--fg); font: 15px/1.5 var(--font); }
+[hidden] { display: none !important; }
+button, input, textarea { font: inherit; }
+:focus-visible { outline: 2px solid #8c96ff; outline-offset: 2px; border-radius: 4px; }
+.wrap { width: min(1100px, 100%); margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+header { background: var(--side); border-bottom: 1px solid var(--line); position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); background: var(--side); z-index: 11; }
+.bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-block: 12px; }
+.brand { display: flex; align-items: center; gap: 10px; font: 700 18px var(--head); color: var(--strong); }
+.brand img { width: 30px; height: 30px; border-radius: 8px; }
+.brand small { font: 600 11px var(--font); letter-spacing: .06em; text-transform: uppercase; background: var(--accent); color: #fff; border-radius: 4px; padding: 2px 6px; }
+.sp { flex: 1; }
+.who { color: var(--muted); font-size: 14px; }
+.link { color: var(--fg); text-decoration: none; background: var(--active); padding: 7px 12px; border-radius: 6px; font-weight: 600; font-size: 14px; } .link:hover { background: var(--hover); }
+nav.tabs { display: flex; gap: 2px; overflow-x: auto; padding-bottom: 0; }
+nav.tabs button { background: none; border: 0; color: var(--muted); padding: 10px 14px; border-bottom: 2px solid transparent; font-weight: 600; cursor: pointer; white-space: nowrap; }
+nav.tabs button:hover { color: var(--fg); } nav.tabs button[aria-selected="true"] { color: var(--strong); border-bottom-color: var(--accent); }
+
+main { padding-block: 28px 64px; }
+h1 { margin: 0 0 4px; font: 700 26px var(--head); color: var(--strong); }
+.sub { margin: 0 0 24px; color: var(--muted); }
+h2 { margin: 32px 0 12px; font: 600 18px var(--head); color: var(--strong); }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat { background: var(--side); border-radius: 8px; padding: 16px; }
+.stat b { display: block; font: 700 28px var(--head); color: var(--strong); font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 13px; }
+
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.field { background: var(--rail); border: 1px solid var(--line); border-radius: 6px; color: var(--fg); padding: 9px 12px; min-width: 0; }
+.field.grow { flex: 1 1 240px; }
+.btn { border: 0; border-radius: 6px; padding: 9px 16px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; } .btn:hover { background: var(--accent-2); }
+.btn.sm { padding: 5px 10px; font-size: 13px; background: var(--active); color: var(--fg); } .btn.sm:hover { background: var(--hover); }
+.btn.danger { background: transparent; color: #ff7b7e; box-shadow: inset 0 0 0 1px rgba(242,63,67,.5); } .btn.danger:hover { background: var(--bad-2); color: #fff; }
+.btn.warn { color: var(--warn); }
+
+.tablebox { overflow-x: auto; background: var(--side); border-radius: 8px; }
+table { width: 100%; border-collapse: collapse; min-width: 640px; }
+th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; padding: 12px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; text-align: right; } th.num { text-align: right; }
+td.act { white-space: nowrap; text-align: right; } td.act .btn + .btn { margin-left: 6px; }
+.badge { display: inline-block; font: 600 11px var(--font); border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
+.b-admin { background: var(--accent); color: #fff; } .b-ban { background: var(--bad); color: #fff; } .b-on { background: rgba(35,165,90,.2); color: #57d28a; } .b-mod { background: var(--ok); color: #fff; }
+.empty { padding: 28px; text-align: center; color: var(--muted); }
+
+.msgs { display: grid; gap: 8px; }
+.msg { background: var(--side); border-radius: 8px; padding: 12px 14px; display: flex; gap: 12px; align-items: flex-start; }
+.msg .t { flex: 1; min-width: 0; } .msg .meta { font-size: 12px; color: var(--muted); } .msg .meta b { color: var(--strong); font-size: 14px; margin-right: 6px; }
+.msg p { margin: 2px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.flash { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--strong); color: #1e1f22; font-weight: 600; padding: 10px 18px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); z-index: 30; max-width: calc(100vw - 32px); }
+.flash.err { background: var(--bad); color: #fff; }
+.pwcard { background: var(--side); border-radius: 8px; padding: 16px; margin-bottom: 16px; border-left: 4px solid var(--warn); }
+.pwcard code { display: inline-block; margin: 6px 0; font: 600 20px var(--head); letter-spacing: .06em; background: var(--rail); padding: 6px 12px; border-radius: 6px; user-select: all; color: var(--strong); }
+
+.count { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px; background: var(--bad); color: #fff; font: 700 11px var(--font); text-align: center; line-height: 18px; }
+.chk { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; color: var(--muted); font-size: 14px; cursor: pointer; } .chk input { width: 16px; height: 16px; }
+.msg { flex-wrap: wrap; } .acts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.denied { min-height: 100vh; display: grid; place-items: center; padding: 24px; text-align: center; } .denied h1 { margin-bottom: 8px; } .denied p { color: var(--muted); margin: 0 0 20px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+
+<div class="denied" id="denied" hidden>
+  <div>
+    <h1>Accès réservé</h1>
+    <p id="deniedMsg">Cette page est réservée à l'administrateur du serveur.</p>
+    <a class="link" href="/app">Retour au chat</a>
+  </div>
+</div>
+
+<div id="panel" hidden>
+  <header>
+    <div class="wrap">
+      <div class="bar">
+        <div class="brand"><img src="/icons/icon-192.png" alt="" width="30" height="30">Cordial <small>Admin</small></div>
+        <div class="sp"></div>
+        <span class="who" id="who"></span>
+        <a class="link" href="/app">Retour au chat</a>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="Sections">
+        <button role="tab" data-t="home" aria-selected="true">Vue d'ensemble</button>
+        <button role="tab" data-t="reports" aria-selected="false">Signalements<span class="count" id="repCount" hidden></span></button>
+        <button role="tab" data-t="users" aria-selected="false">Utilisateurs</button>
+        <button role="tab" data-t="servers" class="adm" aria-selected="false">Serveurs</button>
+        <button role="tab" data-t="messages" aria-selected="false">Messages</button>
+        <button role="tab" data-t="log" class="adm" aria-selected="false">Journal</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section id="s-home">
+      <h1>Vue d'ensemble</h1><p class="sub">L'état de la communauté en un coup d'œil.</p>
+      <div class="stats" id="stats"></div>
+      <h2 class="adm">Annonce à tous les connectés</h2>
+      <form class="row adm" id="announceForm">
+        <input class="field grow" id="announceText" maxlength="300" placeholder="Ex. Maintenance ce soir à 23 h, le chat sera coupé 5 minutes." aria-label="Texte de l'annonce">
+        <button class="btn" type="submit">Envoyer l'annonce</button>
+      </form>
+    </section>
+
+    <section id="s-reports" hidden>
+      <h1>Signalements</h1><p class="sub">Messages signalés par les membres. Un message privé n'apparaît ici que s'il a été signalé par l'un de ses deux participants.</p>
+      <label class="chk"><input type="checkbox" id="repAll"> Afficher aussi les signalements déjà traités</label>
+      <div class="msgs" id="rbody"></div>
+    </section>
+
+    <section id="s-users" hidden>
+      <h1>Utilisateurs</h1><p class="sub" id="usub">Suspendez ou déconnectez un compte.</p>
+      <div id="pw"></div>
+      <div class="row" style="margin-bottom:12px"><input class="field grow" id="uq" type="search" placeholder="Rechercher un pseudo" aria-label="Rechercher un utilisateur"></div>
+      <div class="tablebox"><table><thead><tr><th>Pseudo</th><th>Inscrit le</th><th class="num">Messages</th><th class="num">Serveurs</th><th></th></tr></thead><tbody id="ubody"></tbody></table></div>
+    </section>
+
+    <section id="s-servers" hidden>
+      <h1>Serveurs</h1><p class="sub">Tous les serveurs de la plateforme. Le serveur par défaut est protégé.</p>
+      <div class="tablebox"><table><thead><tr><th>Nom</th><th>Propriétaire</th><th>Code</th><th class="num">Membres</th><th class="num">Salons</th><th class="num">Messages</th><th></th></tr></thead><tbody id="sbody"></tbody></table></div>
+    </section>
+
+    <section id="s-messages" hidden>
+      <h1>Messages</h1><p class="sub">Les 100 derniers messages. Recherchez par texte ou par pseudo pour modérer.</p>
+      <div class="row" style="margin-bottom:12px"><input class="field grow" id="mq" type="search" placeholder="Rechercher un mot ou un pseudo" aria-label="Rechercher un message"></div>
+      <div class="msgs" id="mbody"></div>
+    </section>
+
+    <section id="s-log" hidden>
+      <h1>Journal</h1><p class="sub">Les 100 dernières actions d'administration.</p>
+      <div class="tablebox"><table><thead><tr><th>Date</th><th>Administrateur</th><th>Action</th><th>Cible</th></tr></thead><tbody id="lbody"></tbody></table></div>
+    </section>
+  </main>
+</div>
+<div class="flash" id="flash" role="status" hidden></div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+  var ME = { role: "mod", name: "" };
+  var token = null; try { token = localStorage.getItem("cordial-token"); } catch (e) {}
+  var ft;
+  function flash(t, err) { var f = $("flash"); f.textContent = t; f.className = "flash" + (err ? " err" : ""); f.hidden = false; clearTimeout(ft); ft = setTimeout(function () { f.hidden = true; }, 3500); }
+  function date(t) { return new Date(t).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+
+  function api(method, path, body) {
+    return fetch("/api/admin" + path, { method: method, headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) { var e = new Error(d.error || "Erreur."); e.status = r.status; throw e; } return d; }); });
+  }
+  function fail(e) { if (e.status === 403) return deny(e.message); flash(e.message || "Erreur réseau.", true); }
+  function deny(msg) { $("panel").hidden = true; $("denied").hidden = false; if (msg) $("deniedMsg").textContent = msg; }
+
+  /* Onglets */
+  var current = "home";
+  function show(t) {
+    current = t;
+    document.querySelectorAll("nav.tabs button").forEach(function (b) { b.setAttribute("aria-selected", b.dataset.t === t); });
+    ["home", "reports", "users", "servers", "messages", "log"].forEach(function (k) { $("s-" + k).hidden = k !== t; });
+    load[t]();
+  }
+  document.querySelectorAll("nav.tabs button").forEach(function (b) { b.onclick = function () { show(b.dataset.t); }; });
+
+  function cell(tr, content, cls) { var td = el("td", cls); if (content instanceof Node) td.appendChild(content); else td.textContent = content; tr.appendChild(td); return td; }
+  function btn(label, cls, fn) { var b = el("button", "btn sm " + (cls || ""), label); b.type = "button"; b.onclick = fn; return b; }
+  function empty(box, text, tag) { var r = tag ? el("tr") : el("div", "empty", text); if (tag) { var td = el("td", "empty", text); td.colSpan = 7; r.appendChild(td); } box.appendChild(r); }
+
+  function setCount(n) { var c = $("repCount"); c.textContent = String(n); c.hidden = !n; }
+
+  var load = {
+    home: function () {
+      api("GET", "/stats").then(function (s) {
+        var items = [["Utilisateurs", s.users], ["En ligne", s.online], ["Messages (24 h)", s.messages24h], ["Messages au total", s.messages], ["Serveurs", s.servers], ["Salons", s.channels], ["Comptes suspendus", s.banned], ["Signalements ouverts", s.reportsOpen]];
+        setCount(s.reportsOpen);
+        var box = $("stats"); box.innerHTML = "";
+        items.forEach(function (i) { var c = el("div", "stat"); c.appendChild(el("b", "", String(i[1]))); c.appendChild(el("span", "", i[0])); box.appendChild(c); });
+      }).catch(fail);
+    },
+    reports: function () {
+      api("GET", "/reports?status=" + ($("repAll").checked ? "all" : "open")).then(function (list) {
+        var b = $("rbody"); b.innerHTML = "";
+        setCount(list.filter(function (r) { return r.status === "open"; }).length);
+        if (!list.length) return empty(b, "Aucun signalement en attente. Tout est calme.");
+        list.forEach(function (r) {
+          var row = el("div", "msg"), t = el("div", "t"), meta = el("div", "meta");
+          meta.appendChild(el("b", "", r.author_name)); meta.appendChild(document.createTextNode(r.place + " · " + date(r.ts) + " · signalé par " + (r.reporter || "un membre")));
+          if (r.status === "done") meta.appendChild(el("span", "badge b-on", "traité"));
+          t.appendChild(meta); t.appendChild(el("p", "", r.text));
+          if (r.reason) t.appendChild(el("div", "meta", "Motif : " + r.reason));
+          row.appendChild(t);
+          var a = el("div", "acts");
+          if (r.status === "open") {
+            if (r.messageExists) a.appendChild(btn("Supprimer le message", "danger", function () { api("DELETE", "/messages/" + r.message_id).then(function () { flash("Message supprimé."); load.reports(); }).catch(fail); }));
+            if (r.author_id) a.appendChild(btn("Suspendre l'auteur", "warn", function () {
+              if (!confirm("Suspendre « " + r.author_name + " » ? Il sera déconnecté immédiatement.")) return;
+              api("POST", "/users/" + r.author_id + "/ban", { banned: true }).then(function () { flash("Auteur suspendu."); }).catch(fail);
+            }));
+            a.appendChild(btn("Classer", "", function () { api("POST", "/reports/" + r.id + "/resolve").then(function () { flash("Signalement classé."); load.reports(); }).catch(fail); }));
+          }
+          row.appendChild(a); b.appendChild(row);
+        });
+      }).catch(fail);
+    },
+    users: function () {
+      api("GET", "/users?q=" + encodeURIComponent($("uq").value.trim())).then(function (list) {
+        var b = $("ubody"); b.innerHTML = "";
+        if (!list.length) return empty(b, "Aucun utilisateur trouvé.", true);
+        list.forEach(function (u) {
+          var tr = el("tr"), n = el("span", "", u.name);
+          var c = el("div"); c.appendChild(n);
+          if (u.role === "admin") c.appendChild(el("span", "badge b-admin", "ADMIN"));
+          if (u.role === "mod") c.appendChild(el("span", "badge b-mod", "MODÉRATEUR"));
+          if (u.banned) c.appendChild(el("span", "badge b-ban", "SUSPENDU"));
+          if (u.online) c.appendChild(el("span", "badge b-on", "en ligne"));
+          cell(tr, c); cell(tr, date(u.created)); cell(tr, String(u.messages), "num"); cell(tr, String(u.servers), "num");
+          var a = el("div");
+          if (u.role !== "admin" && !(u.role === "mod" && ME.role !== "admin")) {
+            a.appendChild(btn(u.banned ? "Réactiver" : "Suspendre", u.banned ? "" : "warn", function () {
+              if (!u.banned && !confirm("Suspendre « " + u.name + " » ? Il sera déconnecté et ne pourra plus se connecter.")) return;
+              api("POST", "/users/" + u.id + "/ban", { banned: !u.banned }).then(function () { flash(u.banned ? "Compte réactivé." : "Compte suspendu."); load.users(); }).catch(fail);
+            }));
+            a.appendChild(btn("Déconnecter", "", function () { api("POST", "/users/" + u.id + "/kick").then(function () { flash(u.name + " a été déconnecté."); load.users(); }).catch(fail); }));
+            if (ME.role === "admin") a.appendChild(btn(u.role === "mod" ? "Retirer modérateur" : "Nommer modérateur", "", function () {
+              api("POST", "/users/" + u.id + "/role", { role: u.role === "mod" ? "user" : "mod" }).then(function () { flash(u.role === "mod" ? u.name + " n'est plus modérateur." : u.name + " est maintenant modérateur."); load.users(); }).catch(fail);
+            }));
+            if (ME.role === "admin") a.appendChild(btn("Mot de passe", "", function () {
+              if (!confirm("Générer un nouveau mot de passe temporaire pour « " + u.name + " » ?")) return;
+              api("POST", "/users/" + u.id + "/reset-password").then(function (d) {
+                var p = $("pw"); p.innerHTML = ""; var card = el("div", "pwcard");
+                card.appendChild(el("div", "", "Mot de passe temporaire pour " + u.name + " (affiché une seule fois) :")); card.appendChild(el("code", "", d.password));
+                card.appendChild(el("div", "", "Transmettez-le à la personne : elle devra se reconnecter avec.")); p.appendChild(card); window.scrollTo({ top: 0, behavior: "smooth" });
+              }).catch(fail);
+            }));
+            if (ME.role === "admin") a.appendChild(btn("Supprimer", "danger", function () {
+              if (!confirm("Supprimer définitivement le compte « " + u.name + " » et tous ses messages ? Cette action est irréversible.")) return;
+              api("DELETE", "/users/" + u.id).then(function () { flash("Compte supprimé."); load.users(); }).catch(fail);
+            }));
+          }
+          cell(tr, a, "act"); b.appendChild(tr);
+        });
+      }).catch(fail);
+    },
+    servers: function () {
+      api("GET", "/servers").then(function (list) {
+        var b = $("sbody"); b.innerHTML = "";
+        list.forEach(function (s) {
+          var tr = el("tr"), c = el("div"); c.appendChild(el("span", "", s.name)); if (s.isDefault) c.appendChild(el("span", "badge b-on", "par défaut"));
+          cell(tr, c); cell(tr, s.owner || "—"); cell(tr, s.code); cell(tr, String(s.members), "num"); cell(tr, String(s.channels), "num"); cell(tr, String(s.messages), "num");
+          var a = el("div");
+          if (!s.isDefault) a.appendChild(btn("Supprimer", "danger", function () {
+            if (!confirm("Supprimer le serveur « " + s.name + " » avec ses salons et ses " + s.messages + " messages ? Irréversible.")) return;
+            api("DELETE", "/servers/" + s.id).then(function () { flash("Serveur supprimé."); load.servers(); }).catch(fail);
+          }));
+          cell(tr, a, "act"); b.appendChild(tr);
+        });
+      }).catch(fail);
+    },
+    messages: function () {
+      api("GET", "/messages?q=" + encodeURIComponent($("mq").value.trim())).then(function (list) {
+        var b = $("mbody"); b.innerHTML = "";
+        if (!list.length) return empty(b, "Aucun message trouvé.");
+        list.forEach(function (m) {
+          var row = el("div", "msg"), t = el("div", "t"), meta = el("div", "meta");
+          meta.appendChild(el("b", "", m.user)); meta.appendChild(document.createTextNode(m.server + " · #" + m.channel + " · " + date(m.ts)));
+          t.appendChild(meta); t.appendChild(el("p", "", m.text)); row.appendChild(t);
+          row.appendChild(btn("Supprimer", "danger", function () { api("DELETE", "/messages/" + m.id).then(function () { flash("Message supprimé."); load.messages(); }).catch(fail); }));
+          b.appendChild(row);
+        });
+      }).catch(fail);
+    },
+    log: function () {
+      api("GET", "/log").then(function (list) {
+        var b = $("lbody"); b.innerHTML = "";
+        if (!list.length) return empty(b, "Aucune action enregistrée pour le moment.", true);
+        list.forEach(function (l) { var tr = el("tr"); cell(tr, date(l.ts)); cell(tr, l.admin || "—"); cell(tr, l.action); cell(tr, l.target); b.appendChild(tr); });
+      }).catch(fail);
+    }
+  };
+
+  function debounce(fn) { var t; return function () { clearTimeout(t); t = setTimeout(fn, 250); }; }
+  $("uq").addEventListener("input", debounce(function () { load.users(); }));
+  $("mq").addEventListener("input", debounce(function () { load.messages(); }));
+  $("repAll").onchange = function () { load.reports(); };
+  $("announceForm").onsubmit = function (e) {
+    e.preventDefault(); var t = $("announceText").value.trim(); if (!t) return;
+    api("POST", "/announce", { text: t }).then(function (d) { $("announceText").value = ""; flash("Annonce envoyée à " + d.delivered + " connexion(s)."); load.home(); }).catch(fail);
+  };
+
+  if (!token) return deny("Connectez-vous d'abord depuis le chat avec un compte de l'équipe de modération.");
+  api("GET", "/me").then(function (me) {
+    ME = me; $("denied").hidden = true; $("panel").hidden = false;
+    $("who").textContent = me.name + " · " + (me.role === "admin" ? "Administrateur" : "Modérateur");
+    if (me.role === "admin") $("usub").textContent = "Suspendez, déconnectez, nommez un modérateur, réinitialisez un mot de passe ou supprimez un compte.";
+    else { document.querySelectorAll(".adm").forEach(function (e) { e.hidden = true; }); $("usub").textContent = "Suspendez ou déconnectez un compte. Les autres actions sont réservées à l'administrateur."; }
+    show("home");
+    setInterval(function () { api("GET", "/stats").then(function (s) { setCount(s.reportsOpen); }).catch(function () {}); }, 30000);
+  }).catch(function (e) { deny(e.status === 403 ? "Cette page est réservée à l'équipe de modération. Connectez-vous avec un compte administrateur ou modérateur depuis le chat." : "Serveur injoignable."); });
+})();
+</script>
+</body>
+</html>

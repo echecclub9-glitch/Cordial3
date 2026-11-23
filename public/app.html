@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cordial</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b0828">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Cordial">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" type="image/png" href="/icons/favicon-64.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+
+<section class="auth" id="auth" hidden>
+  <form class="card" id="authForm" autocomplete="on">
+    <h1>Cordial</h1>
+    <p class="sub">Discutez en temps réel avec votre communauté.</p>
+    <div class="tabs" role="tablist"><button type="button" id="tabIn" class="on">Connexion</button><button type="button" id="tabUp">Inscription</button></div>
+    <label for="aName">Pseudo</label>
+    <input class="field" id="aName" name="username" autocomplete="username" maxlength="20" required>
+    <label for="aPass">Mot de passe</label>
+    <input class="field" id="aPass" name="password" type="password" autocomplete="current-password" maxlength="100" required>
+    <div id="aCodeWrap" hidden>
+      <label for="aCode">Code administrateur</label>
+      <input class="field" id="aCode" maxlength="12" autocomplete="off" placeholder="Affiché dans la console du serveur">
+    </div>
+    <div class="err" id="aErr" role="alert"></div>
+    <button class="btn" id="aGo" type="submit">Se connecter</button>
+  </form>
+</section>
+
+<div class="app" id="app" hidden>
+  <nav class="rail" id="rail" aria-label="Serveurs"></nav>
+
+  <aside class="side" id="side">
+    <div class="hd"><h2 id="sName"></h2><button class="mini" id="bSanc" hidden>Sanctions</button><button class="mini" id="bRoles" hidden>Rôles</button><button class="mini" id="bInvite">Inviter</button></div>
+    <div class="chs" id="chs"></div>
+    <div class="vpanel" id="vpanel" hidden>
+      <div class="vinfo"><span class="vdot"></span><div><div class="vstate" id="vState">Vocal connecté</div><div class="vname" id="vName"></div></div></div>
+      <div class="vbtns">
+        <button class="icn" id="vCam" title="Activer la caméra" aria-label="Activer la caméra" hidden><i data-ic="video"></i></button>
+        <button class="icn" id="vShare" title="Partager l'écran" aria-label="Partager l'écran" hidden><i data-ic="screen-share"></i></button>
+        <button class="icn" id="vMute" title="Couper le micro" aria-label="Couper le micro"><i data-ic="mic"></i></button>
+        <button class="icn danger" id="vLeave" title="Quitter le vocal" aria-label="Quitter le vocal"><i data-ic="phone-off"></i></button>
+      </div>
+    </div>
+    <div class="me">
+      <div class="av" id="meAv"></div>
+      <div class="who"><div class="nm" id="meName"></div><div class="st" id="meSt"></div></div>
+      <div class="grow">
+        <a class="icn" id="bAdmin" href="/admin" title="Administration" aria-label="Administration" hidden><i data-ic="shield"></i></a>
+        <button class="icn" id="bBell" title="Notifications" aria-label="Activer les notifications"><i data-ic="bell-off"></i></button>
+        <button class="icn" id="bSt" title="Changer le statut" aria-label="Changer le statut">●</button>
+        <button class="icn" id="bOut" title="Se déconnecter" aria-label="Se déconnecter"><i data-ic="power"></i></button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="top">
+      <button class="tbtn" id="bNav" aria-label="Ouvrir les salons"><i data-ic="menu"></i></button>
+      <span class="t" id="tName"></span><span class="d" id="tTopic"></span><span class="sp"></span>
+      <button class="tbtn show" id="bSearch" title="Rechercher" aria-label="Rechercher dans ce salon"><i data-ic="search"></i></button>
+      <button class="tbtn show" id="bPins" title="Messages épinglés" aria-label="Messages épinglés"><i data-ic="pin"></i></button>
+      <button class="tbtn" id="bMem" aria-label="Afficher les membres"><i data-ic="users"></i></button>
+    </header>
+    <div class="banner" id="banner" hidden>Connexion perdue, reconnexion…</div>
+    <div class="announce" id="announce" role="status" title="Cliquer pour masquer" hidden></div>
+    <section class="stage" id="stage" hidden aria-label="Écrans partagés"></section>
+    <section class="panel" id="panel" hidden aria-label="Recherche et épingles">
+      <div class="phd"><strong id="panelTitle"></strong><button class="mini" id="panelClose" aria-label="Fermer">✕</button></div>
+      <form id="searchForm" hidden><input class="field" id="searchInput" type="search" maxlength="50" placeholder="Rechercher dans ce salon" aria-label="Rechercher dans ce salon"></form>
+      <div class="plist" id="panelList"></div>
+    </section>
+    <div class="msgs" id="msgs" aria-live="polite"></div>
+    <div class="typing" id="typing"></div>
+    <div class="composer">
+      <div class="cmds" id="cmds" hidden></div>
+      <div class="emo" id="emo"></div>
+      <div class="strip" id="replyBar" hidden><span id="replyText"></span><button class="mini" id="replyCancel" aria-label="Annuler la réponse">✕</button></div>
+      <div class="strip" id="fileBar" hidden><span id="fileName"></span><span class="prog" id="fileProg"></span><button class="mini" id="fileCancel" aria-label="Retirer le fichier">✕</button></div>
+      <form class="box" id="form" autocomplete="off">
+        <button type="button" id="bAttach" title="Joindre un fichier" aria-label="Joindre un fichier"><i data-ic="paperclip"></i></button>
+        <input type="file" id="fileInput" hidden accept=".png,.jpg,.jpeg,.gif,.webp,.mp3,.ogg,.wav,.mp4,.webm,.weba,.m4a,.pdf,.zip,.txt">
+        <input id="inp" type="text" maxlength="2000" aria-label="Message" autocomplete="off">
+        <button type="button" id="bEmo" aria-label="Emojis"><i data-ic="smile"></i></button>
+        <button type="button" id="bMic" title="Message vocal" aria-label="Enregistrer un message vocal"><i data-ic="mic"></i></button>
+        <button type="submit" class="go" aria-label="Envoyer">➤</button>
+      </form>
+      <div class="box rec" id="recBar" hidden role="group" aria-label="Enregistrement du message vocal">
+        <button type="button" id="recCancel" title="Annuler" aria-label="Annuler l'enregistrement"><i data-ic="trash"></i></button>
+        <span class="recdot"></span><span class="rectime" id="recTime">0:00</span>
+        <span class="recbars" id="recBars" aria-hidden="true"></span>
+        <button type="button" class="go" id="recSend" title="Envoyer le message vocal" aria-label="Envoyer le message vocal">➤</button>
+      </div>
+    </div>
+  </main>
+
+  <aside class="mem" id="mem" aria-label="Membres"></aside>
+  <div class="scrim" id="scrim"></div>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<div id="audioBox" hidden></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/icons.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

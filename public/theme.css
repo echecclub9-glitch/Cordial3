@@ -1,0 +1,40 @@
+/* Thème galaxie : fond d'étoiles, nébuleuses violettes et bleues. Chargé en dernier par toutes les pages. */
+:root {
+  --rail: rgba(10, 8, 30, .82); --side: rgba(20, 15, 50, .68); --main: rgba(24, 18, 58, .52);
+  --input: rgba(48, 38, 104, .55); --hover: rgba(88, 66, 190, .22); --active: rgba(110, 82, 230, .34);
+  --fg: #e3e0ff; --strong: #ffffff; --muted: #a9a3d6; --line: rgba(150, 130, 255, .16);
+  --accent: #8b5cf6; --accent-2: #6d3fe0; --ok: #34d399; --warn: #fbbf24; --bad: #fb5c7c; --bad-2: #d63a5c;
+}
+html { background: transparent; }
+body {
+  background:
+    radial-gradient(ellipse 70% 55% at 15% 8%, rgba(139, 92, 246, .38), transparent 62%),
+    radial-gradient(ellipse 60% 50% at 88% 22%, rgba(56, 120, 255, .28), transparent 100%),
+    radial-gradient(ellipse 65% 55% at 50% 100%, rgba(217, 70, 239, .26), transparent 65%),
+    linear-gradient(180deg, #0b0828, #07051a) fixed !important;
+}
+/* Étoiles : deux couches de points qui scintillent doucement */
+body::before, body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-repeat: repeat;
+}
+body::before {
+  background-image:
+    radial-gradient(2.6px 2.6px at 12px 18px, #fff, transparent 100%), radial-gradient(2.2px 2.2px at 87px 64px, #cfc6ff, transparent 100%),
+    radial-gradient(3.5px 3.5px at 143px 131px, #fff, transparent 100%), radial-gradient(2.2px 2.2px at 41px 97px, #b8d4ff, transparent 100%),
+    radial-gradient(2.6px 2.6px at 199px 29px, #fff, transparent 100%), radial-gradient(2.2px 2.2px at 233px 187px, #e4c8ff, transparent 100%),
+    radial-gradient(3.1px 3.1px at 170px 220px, #fff, transparent 100%);
+  background-size: 260px 260px; opacity: .85; animation: twinkle 6s ease-in-out infinite alternate;
+}
+body::after {
+  background-image:
+    radial-gradient(2.2px 2.2px at 60px 40px, #fff, transparent 100%), radial-gradient(4.0px 4.0px at 190px 110px, #fff, transparent 100%),
+    radial-gradient(2.2px 2.2px at 120px 200px, #d6ccff, transparent 100%), radial-gradient(2.6px 2.6px at 250px 150px, #fff, transparent 100%);
+  background-size: 340px 340px; background-position: 90px 50px; opacity: .6; animation: twinkle 9s ease-in-out 2s infinite alternate-reverse;
+}
+@keyframes twinkle { from { opacity: .35; } to { opacity: .95; } }
+@media (prefers-reduced-motion: reduce) { body::before, body::after { animation: none; } }
+/* Effet verre sur les panneaux */
+.side, .mem, .rail, .modal, .card, .menu, .panel, .drop, header { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+::selection { background: rgba(139, 92, 246, .55); }
+::-webkit-scrollbar-thumb { background: rgba(139, 92, 246, .35); border-radius: 8px; }

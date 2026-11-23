@@ -1,0 +1,17 @@
+{
+  "name": "cordial",
+  "version": "1.0.0",
+  "description": "Clone de Discord : chat temps réel avec comptes, serveurs et salons",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "web-push": "^4.0.0"
+  }
+}

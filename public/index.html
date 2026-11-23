@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Installer Cordial</title>
+<meta name="description" content="Installez l'application Cordial sur votre ordinateur ou votre téléphone pour discuter avec la communauté.">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b0828">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Cordial">
+<link rel="icon" type="image/png" href="/icons/favicon-64.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+:root {
+  --rail: #1e1f22; --side: #2b2d31; --main: #313338; --active: #404249; --line: #3a3c42;
+  --fg: #dbdee1; --strong: #f2f3f5; --muted: #a0a6ae;
+  --accent: #5865f2; --accent-2: #4752c4; --ok: #23a55a;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --head: "Space Grotesk", "Inter", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--rail); color: var(--fg); font: 16px/1.55 var(--font); }
+a { color: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid #8c96ff; outline-offset: 3px; border-radius: 4px; }
+.wrap { width: min(1080px, 100%); margin: 0 auto; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+
+header { padding-block: 20px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font: 700 20px var(--head); color: var(--strong); text-decoration: none; }
+.brand img { width: 34px; height: 34px; border-radius: 9px; }
+
+.hero { padding-block: 40px 72px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 48px; align-items: center; }
+.hero h1 { margin: 0 0 16px; font: 700 clamp(34px, 5.4vw, 56px)/1.04 var(--head); color: var(--strong); letter-spacing: -.02em; text-wrap: balance; }
+.hero p.lead { margin: 0 0 28px; font-size: 18px; color: var(--muted); max-width: 46ch; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 24px; border-radius: 28px; border: 0; background: var(--accent); color: #fff; font: 600 16px var(--font); text-decoration: none; cursor: pointer; transition: background .15s, transform .15s; }
+.btn:hover { background: var(--accent-2); } .btn:active { transform: scale(.98); }
+.btn.ok { background: var(--ok); cursor: default; }
+.btn.ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--fg); } .btn.ghost:hover { background: var(--side); }
+.btn svg { width: 20px; height: 20px; flex: none; }
+.hint { margin: 14px 0 0; font-size: 14px; color: var(--muted); min-height: 21px; }
+.hint.warn { color: #f0b232; }
+
+/* Aperçu de la fenêtre de l'application */
+.win { background: var(--main); border-radius: 12px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.06); }
+.bar { display: flex; align-items: center; gap: 7px; padding: 10px 14px; background: #232428; }
+.bar i { width: 11px; height: 11px; border-radius: 50%; background: #4e5058; display: block; }
+.bar span { margin-left: 8px; font-size: 12px; color: var(--muted); }
+.cols { display: grid; grid-template-columns: 52px 150px minmax(0, 1fr); height: 300px; }
+.c-rail { background: var(--rail); display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 10px; }
+.c-rail b { width: 34px; height: 34px; border-radius: 50%; background: var(--main); display: grid; place-items: center; font: 600 12px var(--head); color: var(--strong); }
+.c-rail b.on { background: var(--accent); border-radius: 11px; }
+.c-side { background: var(--side); padding: 12px 8px; font-size: 13px; color: var(--muted); }
+.c-side div { padding: 4px 8px; border-radius: 4px; } .c-side .on { background: var(--active); color: var(--strong); }
+.c-side .h { color: var(--strong); font: 600 13px var(--head); padding-bottom: 10px; }
+.c-main { padding: 14px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; overflow: hidden; }
+.msg { display: flex; gap: 10px; } .msg .a { width: 30px; height: 30px; border-radius: 50%; flex: none; display: grid; place-items: center; font: 600 12px var(--head); color: #fff; }
+.msg .n { font-weight: 600; color: var(--strong); } .msg .n small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.msg p { margin: 1px 0 0; line-height: 1.4; }
+.msg .r { display: inline-block; margin-top: 4px; padding: 0 8px; border-radius: 8px; background: rgba(88,101,242,.18); box-shadow: inset 0 0 0 1px var(--accent); font-size: 12px; }
+
+section.block { padding-block: 56px; border-top: 1px solid var(--side); }
+h2 { margin: 0 0 8px; font: 700 clamp(26px, 3.6vw, 34px)/1.15 var(--head); color: var(--strong); letter-spacing: -.01em; text-wrap: balance; }
+.sub { margin: 0 0 28px; color: var(--muted); max-width: 56ch; }
+
+.tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--side); border-radius: 10px; margin-bottom: 24px; flex-wrap: wrap; }
+.tabs button { padding: 9px 16px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: 600 14px var(--font); cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--active); color: var(--strong); }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; counter-reset: s; }
+.steps li { counter-increment: s; background: var(--side); border-radius: 10px; padding: 20px; }
+.steps li::before { content: counter(s); display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; font: 700 14px var(--head); margin-bottom: 12px; }
+.steps strong { color: var(--strong); display: block; margin-bottom: 4px; }
+.steps span { color: var(--muted); font-size: 15px; }
+.note { margin-top: 16px; color: var(--muted); font-size: 14px; }
+kbd { background: var(--main); border-radius: 4px; padding: 1px 6px; font: 500 13px var(--font); color: var(--strong); }
+.panel[hidden] { display: none; }
+
+.feat { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 28px 32px; }
+.feat h3 { margin: 0 0 4px; font: 600 17px var(--head); color: var(--strong); } .feat p { margin: 0; color: var(--muted); font-size: 15px; }
+
+footer { padding-block: 32px max(32px, env(safe-area-inset-bottom, 0px)); color: var(--muted); font-size: 14px; border-top: 1px solid var(--side); display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+footer a { color: var(--fg); }
+
+@media (max-width: 860px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: 40px; padding-block: 24px 48px; }
+  .cols { grid-template-columns: 44px 120px minmax(0, 1fr); height: 260px; }
+}
+@media (max-width: 480px) { .cols { grid-template-columns: 44px minmax(0, 1fr); } .c-side { display: none; } .btn { width: 100%; justify-content: center; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+.dl { display: contents; }
+</style>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="wrap">
+  <header><a class="brand" href="/"><img src="/icons/icon-192.png" alt="" width="34" height="34">Cordial</a></header>
+
+  <main>
+    <div class="hero">
+      <div>
+        <h1>Notre communauté, directement sur votre écran.</h1>
+        <p class="lead">Installez l'application Cordial pour retrouver vos serveurs, vos salons et vos messages en un clic, dans sa propre fenêtre et avec un compteur de messages non lus.</p>
+        <div class="cta">
+          <button class="btn" id="install" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14"/></svg>
+            <span id="installLabel">Installer l'application</span>
+          </button>
+          <a class="btn ghost" href="/app">Ouvrir dans le navigateur</a>
+          <span id="dl" class="dl"></span>
+        </div>
+        <p class="hint" id="deskNote" hidden>Windows peut afficher « Windows a protégé votre PC » : cliquez sur « Informations complémentaires », puis « Exécuter quand même ».</p>
+        <p class="hint" id="hint" aria-live="polite"></p>
+      </div>
+
+      <div class="win" aria-hidden="true">
+        <div class="bar"><i></i><i></i><i></i><span>Cordial</span></div>
+        <div class="cols">
+          <div class="c-rail"><b class="on">Co</b><b>AD</b><b>SJ</b></div>
+          <div class="c-side"><div class="h">Communauté</div><div>#bienvenue</div><div class="on">#général</div><div>#off-topic</div><div>#aide</div></div>
+          <div class="c-main">
+            <div class="msg"><div class="a" style="background:#eb459e">M</div><div><div class="n">Maëlle<small>Aujourd'hui à 20:11</small></div><p>La soirée de samedi est confirmée, on se retrouve à 21 h !</p><span class="r">🎉 4</span></div></div>
+            <div class="msg"><div class="a" style="background:#e67e22">T</div><div><div class="n">Théo<small>Aujourd'hui à 20:12</small></div><p>Parfait, j'invite deux amis avec le code du serveur.</p></div></div>
+            <div class="msg"><div class="a" style="background:#1abc9c">K</div><div><div class="n">Kenza<small>Aujourd'hui à 20:13</small></div><p>Super, à tout à l'heure 👍</p></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <section class="block" id="guide">
+      <h2>Installer en trois étapes</h2>
+      <p class="sub">L'installation prend quelques secondes et ne demande aucun téléchargement. Choisissez votre appareil.</p>
+      <div class="tabs" role="tablist" aria-label="Appareil">
+        <button role="tab" id="t-pc" aria-selected="true" aria-controls="p-pc" type="button">Ordinateur</button>
+        <button role="tab" id="t-android" aria-selected="false" aria-controls="p-android" type="button">Android</button>
+        <button role="tab" id="t-ios" aria-selected="false" aria-controls="p-ios" type="button">iPhone et iPad</button>
+      </div>
+
+      <div class="panel" id="p-pc" role="tabpanel" aria-labelledby="t-pc">
+        <ol class="steps">
+          <li><strong>Ouvrez cette page dans Chrome ou Edge</strong><span>Cliquez sur « Installer l'application » ci-dessus, ou sur l'icône d'installation à droite de la barre d'adresse.</span></li>
+          <li><strong>Confirmez l'installation</strong><span>Une petite fenêtre vous demande de valider. Cliquez sur « Installer ».</span></li>
+          <li><strong>Lancez Cordial</strong><span>L'application s'ouvre dans sa propre fenêtre et reste disponible dans le menu Démarrer, le Launchpad ou le dossier Applications.</span></li>
+        </ol>
+        <p class="note">Sur Safari (Mac), utilisez le menu <kbd>Fichier</kbd> puis « Ajouter au Dock ». Firefox ne sait pas installer ce type d'application : ouvrez la page dans Chrome ou Edge.</p>
+      </div>
+      <div class="panel" id="p-android" role="tabpanel" aria-labelledby="t-android" hidden>
+        <ol class="steps">
+          <li><strong>Ouvrez cette page dans Chrome</strong><span>Appuyez sur « Installer l'application ». Si le bouton est grisé, ouvrez le menu <kbd>⋮</kbd> du navigateur.</span></li>
+          <li><strong>Choisissez « Installer l'application »</strong><span>Selon la version, l'option s'appelle aussi « Ajouter à l'écran d'accueil ».</span></li>
+          <li><strong>Appuyez sur « Installer »</strong><span>L'icône Cordial apparaît sur votre écran d'accueil et s'ouvre en plein écran, sans barre d'adresse.</span></li>
+        </ol>
+      </div>
+      <div class="panel" id="p-ios" role="tabpanel" aria-labelledby="t-ios" hidden>
+        <ol class="steps">
+          <li><strong>Ouvrez cette page dans Safari</strong><span>L'installation n'est possible que depuis Safari sur iPhone et iPad, pas depuis les autres navigateurs.</span></li>
+          <li><strong>Touchez le bouton Partager</strong><span>C'est le carré avec une flèche vers le haut, en bas de l'écran (ou en haut sur iPad).</span></li>
+          <li><strong>« Sur l'écran d'accueil »</strong><span>Faites défiler la liste, touchez cette option, puis « Ajouter ». Cordial apparaît parmi vos applications.</span></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>Ce que vous retrouvez dans l'application</h2>
+      <p class="sub">Les mêmes fonctions que sur le site, avec l'accès rapide d'une vraie application.</p>
+      <div class="feat">
+        <div><h3>Messages en temps réel</h3><p>Les messages arrivent instantanément, avec réactions, mentions et indicateur de saisie.</p></div>
+        <div><h3>Serveurs et salons</h3><p>Rejoignez la communauté avec un code d'invitation ou créez votre propre serveur.</p></div>
+        <div><h3>Une fenêtre à part</h3><p>Cordial s'ouvre sans barre d'adresse ni onglets, comme n'importe quelle application.</p></div>
+        <div><h3>Toujours à jour</h3><p>Pas de mise à jour à faire : l'application se met à jour toute seule à chaque ouverture.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <footer><span>Cordial</span><span>Un problème d'installation ? <a href="/app">Utilisez le site dans le navigateur</a>.</span></footer>
+</div>
+
+<script>
+fetch("/api/config").then((r) => r.json()).then((c) => {
+  const d = (c && c.downloads) || {}, box = document.getElementById("dl"), ua = navigator.userAgent;
+  const me = /Windows/.test(ua) ? "windows" : /Mac/.test(ua) && !/iPhone|iPad/.test(ua) ? "mac" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : null;
+  const names = { windows: "Windows", mac: "macOS", linux: "Linux" };
+  Object.keys(names).filter((k) => d[k]).sort((a, b) => (b === me) - (a === me)).forEach((k) => {
+    const a = document.createElement("a"); a.className = "btn" + (k === me ? "" : " ghost"); a.href = d[k]; a.textContent = k === me ? "Télécharger pour " + names[k] : names[k]; box.appendChild(a);
+  });
+  if (d.windows) document.getElementById("deskNote").hidden = !(me === "windows" || !me);
+}).catch(() => {});
+
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var ua = navigator.userAgent || "";
+  var isIOS = /iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  var isAndroid = /android/i.test(ua);
+  var standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if (standalone) { location.replace("/app"); return; }
+
+  /* Onglets */
+  var tabs = ["pc", "android", "ios"];
+  function show(name) {
+    tabs.forEach(function (t) { var on = t === name; $("t-" + t).setAttribute("aria-selected", on); $("t-" + t).tabIndex = on ? 0 : -1; $("p-" + t).hidden = !on; });
+  }
+  tabs.forEach(function (t, i) {
+    var b = $("t-" + t);
+    b.onclick = function () { show(t); };
+    b.onkeydown = function (e) { var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0; if (d) { var n = tabs[(i + d + 3) % 3]; show(n); $("t-" + n).focus(); } };
+  });
+  show(isIOS ? "ios" : isAndroid ? "android" : "pc");
+
+  /* Installation */
+  var deferred = null, btn = $("install"), label = $("installLabel"), hint = $("hint");
+  if (!window.isSecureContext) {
+    hint.textContent = "L'installation demande une connexion sécurisée (HTTPS). Ouvrez le site via son adresse https://.";
+    hint.className = "hint warn";
+  } else if (isIOS) {
+    hint.textContent = "Sur iPhone et iPad : touchez Partager, puis « Sur l'écran d'accueil ».";
+  } else {
+    hint.textContent = "Si le bouton ne réagit pas, suivez le guide ci-dessous pour votre appareil.";
+  }
+
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault(); deferred = e; hint.className = "hint"; hint.textContent = "Prêt : l'installation se fait en un clic.";
+  });
+  window.addEventListener("appinstalled", function () { done(); });
+  function done() {
+    deferred = null; btn.className = "btn ok"; label.textContent = "Application installée";
+    hint.className = "hint"; hint.textContent = "Ouvrez Cordial depuis votre bureau, votre menu d'applications ou votre écran d'accueil.";
+  }
+  btn.onclick = function () {
+    if (btn.classList.contains("ok")) return;
+    if (deferred) {
+      deferred.prompt();
+      deferred.userChoice.then(function (c) { if (c.outcome === "accepted") done(); else hint.textContent = "Installation annulée. Vous pouvez réessayer quand vous voulez."; deferred = null; });
+    } else {
+      hint.className = "hint"; hint.textContent = isIOS ? "Sur iPhone et iPad : touchez Partager, puis « Sur l'écran d'accueil »." : "Votre navigateur n'a pas proposé l'installation automatique. Suivez les étapes ci-dessous.";
+      $("guide").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  if ("serviceWorker" in navigator) window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function () {}); });
+})();
+</script>
+</body>
+</html>
