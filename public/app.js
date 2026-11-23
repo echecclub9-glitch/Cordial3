@@ -270,7 +270,7 @@
     const box = $("chs"); box.innerHTML = "";
     $("app").classList.toggle("dmview", S.view === "dm");
     if (S.view === "dm") {
-      $("sName").textContent = "Messages privés"; $("bInvite").hidden = true; $("bRoles").hidden = true; $("bSanc").hidden = true;
+      $("sName").textContent = "Messages privés"; $("bSet").hidden = true;
       if (!S.dms.length) { box.appendChild(el("div", "emptyside", "Aucune conversation. Cliquez sur un membre d'un serveur, puis sur « Écrire à… » pour lui envoyer un message.")); return; }
       S.dms.forEach((d) => {
         const u = S.unread[d.id] || 0;
@@ -281,7 +281,7 @@
       return;
     }
     const s = server(); if (!s) { $("sName").textContent = ""; return; }
-    nameWithLogo($("sName"), s); $("bInvite").hidden = false; $("bRoles").hidden = !canIn(PERM.ROLES); $("bSanc").hidden = !canMod();
+    nameWithLogo($("sName"), s); $("bSet").hidden = false;
     const canManage = canIn(PERM.CHANNELS);
     if (canManage) { const a = icText(el("button", "addch"), "plus", "Créer un salon"); a.onclick = channelCreateModal; box.appendChild(a); }
     const cats = []; s.channels.forEach((c) => { if (cats.indexOf(c.category) < 0) cats.push(c.category); });
@@ -659,7 +659,7 @@
     modal({ title: "Signaler ce message", sub: "L'équipe de modération sera prévenue. Message de " + msg.user.name + " : « " + (msg.text || "pièce jointe").slice(0, 80) + " »", fields: [{ id: "r", label: "Motif (facultatif)", ph: "Insultes, spam, contenu inapproprié…", max: 200 }],
       buttons: [{ label: "Envoyer le signalement", danger: true, run: (m) => S.sock.emit("report", { id: msg.id, reason: m.v("r") }, (r) => { if (r && r.error) m.error(r.error); else { m.close(); toast("Merci, le signalement a été transmis à l'équipe."); } }) }, { label: "Annuler", ghost: true }] });
   }
-  $("bInvite").onclick = () => {
+  const inviteModal = () => {
     const s = server(); if (!s) return;
     const m = modal({ title: "Inviter des amis", sub: "Partagez ce code pour rejoindre « " + s.name + " ».", buttons: [
       { label: "Copier le code", run: (mm) => { try { navigator.clipboard.writeText(s.code).then(() => { mm.close(); toast("Code copié."); }, () => mm.error("Copie impossible, sélectionnez le code.")); } catch (e) { mm.error("Copie impossible, sélectionnez le code."); } } },
@@ -744,7 +744,6 @@
     card.append(tabs, body); const bye = el("button", "btn ghost", "Fermer"); bye.type = "button"; card.appendChild(bye);
     const close = overlay(card); bye.onclick = close; render(); load();
   }
-  $("bSanc").onclick = sanctionsPanel;
   /* ---------- Rôles ---------- */
   const rankOfMember = (mb) => { const rs = ((S.roles[S.sid] || {}).roles || []); return Math.max(0, ...rs.filter((r) => (mb.roles || []).includes(r.id)).map((r) => r.position)); };
   // Dans le menu d'un membre : attribuer les rôles accessibles, et expulser
@@ -853,7 +852,23 @@
     }
     S.rolesRefresh = render; loadRoles(sid); render();
   }
-  $("bRoles").onclick = rolesModal;
+  /* ---------- Paramètres du serveur : tout au même endroit ---------- */
+  function serverSettings() {
+    const s = server(); if (!s) return;
+    const card = el("div", "card setcard"); card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Paramètres du serveur");
+    const hd = el("h2", "sethd"); nameWithLogo(hd, s); card.appendChild(hd);
+    card.appendChild(el("p", "sub", "Paramètres du serveur"));
+    let close = () => {};
+    const row = (icon, title, desc, fn) => { const b = el("button", "setrow"); b.type = "button"; const i = el("span", "seti"); i.innerHTML = ic(icon, 20); const t = el("span", "sett"); t.append(el("b", "", title), el("small", "", desc)); b.append(i, t); b.onclick = () => { close(); fn(); }; card.appendChild(b); };
+    row("user", "Inviter des amis", "Code d'invitation : " + s.code, inviteModal);
+    if (canIn(PERM.CHANNELS)) row("plus", "Créer un salon", "Texte ou vocal, public ou privé", channelCreateModal);
+    if (canIn(PERM.ROLES)) row("shield", "Rôles et permissions", "Créer des rôles, choisir leurs droits", rolesModal);
+    if (canMod()) row("alert", "Sanctions", "Bannis, sourdines en cours et historique", sanctionsPanel);
+    card.appendChild(el("p", "setinfo", (s.partner ? "Serveur partenaire de Cordial · " : "") + (((S.members[s.id] || []).length) || "—") + " membre(s) · " + s.channels.length + " salon(s)"));
+    const bye = el("button", "btn ghost", "Fermer"); bye.type = "button"; card.appendChild(bye);
+    close = overlay(card); bye.onclick = close;
+  }
+  $("bSet").onclick = serverSettings;
 
   /* ---------- Profils ---------- */
   const DATE = (t) => new Date(t).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
