@@ -118,7 +118,7 @@
       if (d.banned) toast("Vous avez été banni de « " + d.name + " » " + (d.until ? "jusqu'au " + WHEN(d.until) : "définitivement") + (d.reason ? " — " + d.reason : "") + ".");
       else toast("Vous avez été expulsé de « " + d.name + " »." + (d.reason ? " Motif : " + d.reason : ""));
     });
-    sock.on("serverUpdated", (d) => { const s = S.servers.find((x) => x.id === d.serverId); if (!s) return; s.partner = d.partner; s.logo = d.logo; renderSide(); });
+    sock.on("serverUpdated", (d) => { const s = S.servers.find((x) => x.id === d.serverId); if (!s) return; s.partner = d.partner; s.logo = d.logo; if (d.name) { s.name = d.name; s.abbr = d.abbr; } renderRail(); renderSide(); });
     sock.on("channelsChanged", (d) => refreshChannels(d.serverId));
     sock.on("forceVoiceLeave", (d) => { if (V.sid === d.serverId) leaveVoice(); });
     sock.on("sanction", (d) => {
@@ -853,6 +853,11 @@
     S.rolesRefresh = render; loadRoles(sid); render();
   }
   /* ---------- Paramètres du serveur : tout au même endroit ---------- */
+  function renameServerModal() {
+    const s = server(); if (!s) return;
+    modal({ title: "Renommer le serveur", fields: [{ id: "n", label: "Nom du serveur", value: s.name, max: 30 }], buttons: [
+      { label: "Enregistrer", run: (m) => S.sock.emit("renameServer", { serverId: s.id, name: m.v("n") }, (r) => { if (r && r.error) m.error(r.error); else { m.close(); toast("Serveur renommé."); } }) }, { label: "Annuler", ghost: true }] });
+  }
   function serverSettings() {
     const s = server(); if (!s) return;
     const card = el("div", "card setcard"); card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Paramètres du serveur");
@@ -861,6 +866,7 @@
     let close = () => {};
     const row = (icon, title, desc, fn) => { const b = el("button", "setrow"); b.type = "button"; const i = el("span", "seti"); i.innerHTML = ic(icon, 20); const t = el("span", "sett"); t.append(el("b", "", title), el("small", "", desc)); b.append(i, t); b.onclick = () => { close(); fn(); }; card.appendChild(b); };
     row("user", "Inviter des amis", "Code d'invitation : " + s.code, inviteModal);
+    if (s.owner === S.me.id || isStaff()) row("edit", "Renommer le serveur", "Actuellement : " + s.name, renameServerModal);
     if (canIn(PERM.CHANNELS)) row("plus", "Créer un salon", "Texte ou vocal, public ou privé", channelCreateModal);
     if (canIn(PERM.ROLES)) row("shield", "Rôles et permissions", "Créer des rôles, choisir leurs droits", rolesModal);
     if (canMod()) row("alert", "Sanctions", "Bannis, sourdines en cours et historique", sanctionsPanel);
