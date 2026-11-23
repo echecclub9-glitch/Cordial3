@@ -289,3 +289,21 @@ label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .04em
 .seti { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; background: rgba(255,255,255,.08); }
 .sett { display: flex; flex-direction: column; min-width: 0; } .sett b { color: var(--strong); font-size: 14px; } .setrow:hover b { color: #fff; } .sett small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .setinfo { text-align: center; color: var(--muted); font-size: 12px; margin: 14px 0 10px; }
+
+/* Photo et bannière du serveur */
+.srv.img { background-size: cover; background-position: center; } .srv.img:hover { background-color: var(--main); }
+.side .hd.hasbanner { height: 96px; align-items: flex-end; padding-bottom: 10px; background-size: cover; background-position: center; }
+.side .hd.hasbanner h2 { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); } .side .hd.hasbanner .mini { color: #fff; }
+.simg { display: flex; gap: 12px; align-items: center; margin-top: 14px; }
+.sprev { flex: none; display: grid; place-items: center; background: var(--main) center/cover no-repeat; color: var(--muted); font-size: 12px; border-radius: 12px; }
+.sprev.icon { width: 64px; height: 64px; border-radius: 50%; font: 600 18px var(--head); } .sprev.banner { width: 120px; height: 64px; }
+.simginfo { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; } .simginfo small { color: var(--muted); }
+
+/* Photo et bannière du serveur */
+.srv.img { background-size: cover; background-position: center; } .srv.img:hover { background-color: var(--main); }
+.side .hd.hasbanner { height: 96px; align-items: flex-end; padding-bottom: 10px; background-size: cover; background-position: center; }
+.side .hd.hasbanner h2 { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); } .side .hd.hasbanner .mini { color: #fff; }
+.simg { display: flex; gap: 12px; align-items: center; margin-top: 14px; }
+.sprev { flex: none; display: grid; place-items: center; background: var(--main) center/cover no-repeat; color: var(--muted); font-size: 12px; border-radius: 12px; }
+.sprev.icon { width: 64px; height: 64px; border-radius: 50%; font: 600 18px var(--head); } .sprev.banner { width: 120px; height: 64px; }
+.simginfo { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; } .simginfo small { color: var(--muted); }

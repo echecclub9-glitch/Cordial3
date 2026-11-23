@@ -118,7 +118,7 @@
       if (d.banned) toast("Vous avez été banni de « " + d.name + " » " + (d.until ? "jusqu'au " + WHEN(d.until) : "définitivement") + (d.reason ? " — " + d.reason : "") + ".");
       else toast("Vous avez été expulsé de « " + d.name + " »." + (d.reason ? " Motif : " + d.reason : ""));
     });
-    sock.on("serverUpdated", (d) => { const s = S.servers.find((x) => x.id === d.serverId); if (!s) return; s.partner = d.partner; s.logo = d.logo; if (d.name) { s.name = d.name; s.abbr = d.abbr; } renderRail(); renderSide(); });
+    sock.on("serverUpdated", (d) => { const s = S.servers.find((x) => x.id === d.serverId); if (!s) return; s.partner = d.partner; s.logo = d.logo; if (d.name) { s.name = d.name; s.abbr = d.abbr; } s.icon = d.icon; s.banner = d.banner; renderRail(); renderSide(); if (S.imgRefresh) S.imgRefresh(); });
     sock.on("channelsChanged", (d) => refreshChannels(d.serverId));
     sock.on("forceVoiceLeave", (d) => { if (V.sid === d.serverId) leaveVoice(); });
     sock.on("sanction", (d) => {
@@ -248,7 +248,7 @@
     home.onclick = () => go("dm", null, dmOf(S.cid) ? S.cid : S.dms[0] ? S.dms[0].id : null);
     r.appendChild(home); r.appendChild(el("div", "sep"));
     S.servers.forEach((s) => {
-      const b = el("button", "srv" + (S.view === "server" && s.id === S.sid ? " on" : ""), s.abbr); b.title = s.name; b.setAttribute("aria-label", s.name);
+      const b = el("button", "srv" + (S.view === "server" && s.id === S.sid ? " on" : "") + (s.icon ? " img" : ""), s.icon ? "" : s.abbr); if (s.icon) b.style.backgroundImage = "url(/files/" + s.icon + ")"; b.title = s.name; b.setAttribute("aria-label", s.name);
       const u = s.channels.reduce((a, c) => a + (S.unread[c.id] || 0), 0);
       if (u && !(S.view === "server" && s.id === S.sid)) b.appendChild(el("span", "dot", String(u)));
       b.onclick = () => go("server", s.id, firstText(s));
@@ -270,7 +270,7 @@
     const box = $("chs"); box.innerHTML = "";
     $("app").classList.toggle("dmview", S.view === "dm");
     if (S.view === "dm") {
-      $("sName").textContent = "Messages privés"; $("bSet").hidden = true;
+      $("sName").textContent = "Messages privés"; $("bSet").hidden = true; $("sName").parentNode.classList.remove("hasbanner"); $("sName").parentNode.style.backgroundImage = "";
       if (!S.dms.length) { box.appendChild(el("div", "emptyside", "Aucune conversation. Cliquez sur un membre d'un serveur, puis sur « Écrire à… » pour lui envoyer un message.")); return; }
       S.dms.forEach((d) => {
         const u = S.unread[d.id] || 0;
@@ -282,6 +282,7 @@
     }
     const s = server(); if (!s) { $("sName").textContent = ""; return; }
     nameWithLogo($("sName"), s); $("bSet").hidden = false;
+    { const hd = $("sName").parentNode; hd.classList.toggle("hasbanner", !!s.banner); hd.style.backgroundImage = s.banner ? "linear-gradient(transparent 30%, rgba(0,0,0,.7)), url(/files/" + s.banner + ")" : ""; }
     const canManage = canIn(PERM.CHANNELS);
     if (canManage) { const a = icText(el("button", "addch"), "plus", "Créer un salon"); a.onclick = channelCreateModal; box.appendChild(a); }
     const cats = []; s.channels.forEach((c) => { if (cats.indexOf(c.category) < 0) cats.push(c.category); });
@@ -853,6 +854,30 @@
     S.rolesRefresh = render; loadRoles(sid); render();
   }
   /* ---------- Paramètres du serveur : tout au même endroit ---------- */
+  function serverImagesModal() {
+    const sid = S.sid, card = el("div", "card setcard"); card.setAttribute("role", "dialog"); card.appendChild(el("h2", "", "Image et bannière"));
+    const err = el("div", "err"), body = el("div");
+    const paint = () => {
+      const s = S.servers.find((x) => x.id === sid); if (!s) return; body.innerHTML = "";
+      [["icon", "Photo du serveur", "Carrée, 1 Mo maximum"], ["banner", "Bannière", "Large, 3 Mo maximum"]].forEach(([kind, title, hint]) => {
+        const sec = el("div", "simg"), prev = el("div", "sprev " + kind), f = s[kind]; if (f) prev.style.backgroundImage = "url(/files/" + f + ")"; else prev.textContent = kind === "icon" ? s.abbr : "Aucune bannière";
+        const info = el("div", "simginfo"); info.append(el("b", "", title), el("small", "", hint));
+        const fi = el("input"); fi.type = "file"; fi.accept = "image/png,image/jpeg,image/gif,image/webp"; fi.hidden = true;
+        fi.onchange = async () => {
+          const file = fi.files[0]; if (!file) return; err.textContent = "";
+          const r = await fetch("/api/servers/" + sid + "/image?kind=" + kind, { method: "POST", headers: { Authorization: "Bearer " + S.token, "Content-Type": "application/octet-stream" }, body: file });
+          if (!r.ok) { const d = await r.json().catch(() => ({})); err.textContent = d.error || "Envoi impossible."; }
+        };
+        const up = el("button", "pbtn", f ? "Changer" : "Choisir une image"); up.type = "button"; up.onclick = () => fi.click();
+        info.append(up, fi);
+        if (f) { const rm = el("button", "pbtn ghost", "Retirer"); rm.type = "button"; rm.onclick = () => fetch("/api/servers/" + sid + "/image?kind=" + kind, { method: "DELETE", headers: { Authorization: "Bearer " + S.token } }); info.appendChild(rm); }
+        sec.append(prev, info); body.appendChild(sec);
+      });
+    };
+    S.imgRefresh = paint; paint(); card.append(body, err);
+    const bye = el("button", "btn ghost", "Fermer"); bye.type = "button"; card.appendChild(bye);
+    const close = overlay(card); bye.onclick = () => { S.imgRefresh = null; close(); };
+  }
   function renameServerModal() {
     const s = server(); if (!s) return;
     modal({ title: "Renommer le serveur", fields: [{ id: "n", label: "Nom du serveur", value: s.name, max: 30 }], buttons: [
@@ -866,7 +891,7 @@
     let close = () => {};
     const row = (icon, title, desc, fn) => { const b = el("button", "setrow"); b.type = "button"; const i = el("span", "seti"); i.innerHTML = ic(icon, 20); const t = el("span", "sett"); t.append(el("b", "", title), el("small", "", desc)); b.append(i, t); b.onclick = () => { close(); fn(); }; card.appendChild(b); };
     row("user", "Inviter des amis", "Code d'invitation : " + s.code, inviteModal);
-    if (s.owner === S.me.id || isStaff()) row("edit", "Renommer le serveur", "Actuellement : " + s.name, renameServerModal);
+    if (s.owner === S.me.id || isStaff()) { row("edit", "Renommer le serveur", "Actuellement : " + s.name, renameServerModal); row("image", "Image et bannière", "Photo du serveur et bandeau d'en-tête", serverImagesModal); }
     if (canIn(PERM.CHANNELS)) row("plus", "Créer un salon", "Texte ou vocal, public ou privé", channelCreateModal);
     if (canIn(PERM.ROLES)) row("shield", "Rôles et permissions", "Créer des rôles, choisir leurs droits", rolesModal);
     if (canMod()) row("alert", "Sanctions", "Bannis, sourdines en cours et historique", sanctionsPanel);
