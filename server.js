@@ -124,7 +124,7 @@ for (const sql of [
   "ALTER TABLE channels ADD COLUMN readonly INTEGER NOT NULL DEFAULT 0", "ALTER TABLE messages ADD COLUMN edited INTEGER",
   "ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", "ALTER TABLE messages ADD COLUMN poll TEXT",
   "ALTER TABLE messages ADD COLUMN reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL",
-  "ALTER TABLE users ADD COLUMN avatar TEXT", "ALTER TABLE users ADD COLUMN banner TEXT",
+  "ALTER TABLE servers ADD COLUMN partner INTEGER NOT NULL DEFAULT 0", "ALTER TABLE servers ADD COLUMN partner_logo TEXT", "ALTER TABLE users ADD COLUMN avatar TEXT", "ALTER TABLE users ADD COLUMN banner TEXT",
   "ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''", "ALTER TABLE users ADD COLUMN custom TEXT NOT NULL DEFAULT ''",
   "ALTER TABLE files ADD COLUMN purpose TEXT",
   "ALTER TABLE channels ADD COLUMN private INTEGER NOT NULL DEFAULT 0",
@@ -509,7 +509,7 @@ function chView(c, viewer) {
 }
 const visibleChannels = (sid, user) => q.channelsOf.all(sid).filter((c) => canSee(user, c)).map((c) => chView(c, user));
 function serverView(s, user) {
-  return { id: s.id, name: s.name, abbr: s.abbr, code: s.code, owner: s.owner_id, channels: visibleChannels(s.id, user) };
+  return { id: s.id, name: s.name, abbr: s.abbr, code: s.code, owner: s.owner_id, partner: !!s.partner, logo: s.partner ? s.partner_logo : null, channels: visibleChannels(s.id, user) };
 }
 function rosterOf(channelId) {
   const room = voiceRooms.get(channelId);
@@ -1259,10 +1259,42 @@ admin.delete("/users/:id", requireAdmin, (req, res) => {
   audit(req, "Compte supprimé", u.name); res.json({ ok: true });
 });
 
-admin.get("/servers", requireAdmin, (req, res) => res.json(db.prepare(`SELECT s.id, s.name, s.code, o.name AS owner,
+admin.get("/servers", requireAdmin, (req, res) => res.json(db.prepare(`SELECT s.id, s.name, s.code, s.partner, s.partner_logo AS logo, o.name AS owner,
     (SELECT COUNT(*) FROM members WHERE server_id = s.id) AS members, (SELECT COUNT(*) FROM channels WHERE server_id = s.id) AS channels,
     (SELECT COUNT(*) FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.server_id = s.id) AS messages
   FROM servers s LEFT JOIN users o ON o.id = s.owner_id WHERE s.name != '__dm__' ORDER BY s.id`).all().map((s) => ({ ...s, isDefault: s.id === DEFAULT_SERVER }))));
+
+/* Serveurs partenaires : badge « Partenaire » et logo affiché devant le nom, pour tous les membres */
+const partnerPublic = (s) => ({ serverId: s.id, partner: !!s.partner, logo: s.partner ? s.partner_logo : null });
+const partnerTarget = (req, res) => {
+  const s = q.serverById.get(Number(req.params.id));
+  if (!s || s.id === DM_SERVER) { res.status(404).json({ error: "Serveur introuvable." }); return null; }
+  return s;
+};
+const partnerChanged = (id) => io.to("srv:" + id).emit("serverUpdated", partnerPublic(q.serverById.get(id)));
+admin.post("/servers/:id/partner", requireAdmin, (req, res) => {
+  const s = partnerTarget(req, res); if (!s) return;
+  const on = req.body && req.body.partner ? 1 : 0;
+  db.prepare("UPDATE servers SET partner = ? WHERE id = ?").run(on, s.id);
+  partnerChanged(s.id); audit(req, on ? "Serveur partenaire" : "Partenariat retiré", s.name); res.json({ ok: true });
+});
+admin.post("/servers/:id/logo", requireAdmin, express.raw({ type: () => true, limit: 1024 * 1024 }), (req, res) => {
+  const s = partnerTarget(req, res); if (!s) return;
+  const buf = req.body;
+  if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: "Image vide ou trop lourde (1 Mo maximum)." });
+  const ext = IMG_EXT.find((e) => FILE_TYPES[e].ok(buf));
+  if (!ext) return res.status(415).json({ error: "Format non accepté (PNG, JPG, GIF ou WebP)." });
+  const id = crypto.randomBytes(16).toString("hex");
+  fs.writeFileSync(path.join(UPLOAD_DIR, id), buf);
+  db.prepare("INSERT INTO files (id, user_id, name, mime, size, ts, purpose) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, req.admin.id, "logo." + ext, FILE_TYPES[ext].mime, buf.length, Date.now(), "logo");
+  const old = s.partner_logo; db.prepare("UPDATE servers SET partner_logo = ? WHERE id = ?").run(id, s.id); dropProfileImage(old);
+  partnerChanged(s.id); audit(req, "Logo de partenaire modifié", s.name); res.json({ ok: true });
+});
+admin.delete("/servers/:id/logo", requireAdmin, (req, res) => {
+  const s = partnerTarget(req, res); if (!s) return;
+  db.prepare("UPDATE servers SET partner_logo = NULL WHERE id = ?").run(s.id); dropProfileImage(s.partner_logo);
+  partnerChanged(s.id); audit(req, "Logo de partenaire retiré", s.name); res.json({ ok: true });
+});
 
 admin.delete("/servers/:id", requireAdmin, (req, res) => {
   const s = q.serverById.get(Number(req.params.id));
@@ -1272,7 +1304,7 @@ admin.delete("/servers/:id", requireAdmin, (req, res) => {
   db.prepare("SELECT m.id FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.server_id = ?").all(s.id).forEach((m) => removeFiles(m.id));
   q.channelsOf.all(s.id).forEach((c) => { voiceRooms.delete(c.id); io.in("voice:" + c.id).emit("voiceEnded", { channelId: c.id }); io.in("voice:" + c.id).socketsLeave("voice:" + c.id); });
   io.to(room).emit("serverDeleted", { serverId: s.id }); io.in(room).socketsLeave(room);
-  db.prepare("DELETE FROM servers WHERE id = ?").run(s.id);
+  db.prepare("DELETE FROM servers WHERE id = ?").run(s.id); dropProfileImage(s.partner_logo);
   audit(req, "Serveur supprimé", s.name); res.json({ ok: true });
 });
 

@@ -118,6 +118,7 @@
       if (d.banned) toast("Vous avez été banni de « " + d.name + " » " + (d.until ? "jusqu'au " + WHEN(d.until) : "définitivement") + (d.reason ? " — " + d.reason : "") + ".");
       else toast("Vous avez été expulsé de « " + d.name + " »." + (d.reason ? " Motif : " + d.reason : ""));
     });
+    sock.on("serverUpdated", (d) => { const s = S.servers.find((x) => x.id === d.serverId); if (!s) return; s.partner = d.partner; s.logo = d.logo; renderSide(); });
     sock.on("channelsChanged", (d) => refreshChannels(d.serverId));
     sock.on("forceVoiceLeave", (d) => { if (V.sid === d.serverId) leaveVoice(); });
     sock.on("sanction", (d) => {
@@ -256,6 +257,15 @@
     const add = el("button", "srv add", "+"); add.title = "Créer ou rejoindre un serveur"; add.setAttribute("aria-label", "Créer ou rejoindre un serveur");
     add.onclick = serverModal; r.appendChild(add);
   }
+  // Serveur partenaire : le logo s'affiche juste devant le nom, suivi d'un badge
+  function nameWithLogo(h, s) {
+    h.textContent = "";
+    if (s.partner) {
+      if (s.logo) { const i = el("img", "plogo"); i.src = "/files/" + s.logo; i.alt = ""; h.appendChild(i); } else { const i = el("span", "plogo ph"); i.innerHTML = ic("shield", 16); h.appendChild(i); }
+    }
+    h.appendChild(el("span", "sn", s.name));
+    if (s.partner) { const b = el("span", "pbadge", "Partenaire"); b.title = "Serveur partenaire de Cordial"; h.appendChild(b); }
+  }
   function renderSide() {
     const box = $("chs"); box.innerHTML = "";
     $("app").classList.toggle("dmview", S.view === "dm");
@@ -271,7 +281,7 @@
       return;
     }
     const s = server(); if (!s) { $("sName").textContent = ""; return; }
-    $("sName").textContent = s.name; $("bInvite").hidden = false; $("bRoles").hidden = !canIn(PERM.ROLES); $("bSanc").hidden = !canMod();
+    nameWithLogo($("sName"), s); $("bInvite").hidden = false; $("bRoles").hidden = !canIn(PERM.ROLES); $("bSanc").hidden = !canMod();
     const canManage = canIn(PERM.CHANNELS);
     if (canManage) { const a = icText(el("button", "addch"), "plus", "Créer un salon"); a.onclick = channelCreateModal; box.appendChild(a); }
     const cats = []; s.channels.forEach((c) => { if (cats.indexOf(c.category) < 0) cats.push(c.category); });

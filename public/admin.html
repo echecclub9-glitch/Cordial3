@@ -60,6 +60,7 @@ table { width: 100%; border-collapse: collapse; min-width: 640px; }
 th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; padding: 12px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 tr:last-child td { border-bottom: 0; }
+.plogo { width: 22px; height: 22px; border-radius: 6px; object-fit: cover; vertical-align: middle; margin-right: 8px; } .pact { display: flex; gap: 6px; flex-wrap: wrap; }
 td.num { font-variant-numeric: tabular-nums; text-align: right; } th.num { text-align: right; }
 td.act { white-space: nowrap; text-align: right; } td.act .btn + .btn { margin-left: 6px; }
 .badge { display: inline-block; font: 600 11px var(--font); border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
@@ -140,7 +141,7 @@ td.act { white-space: nowrap; text-align: right; } td.act .btn + .btn { margin-l
 
     <section id="s-servers" hidden>
       <h1>Serveurs</h1><p class="sub">Tous les serveurs de la plateforme. Le serveur par défaut est protégé.</p>
-      <div class="tablebox"><table><thead><tr><th>Nom</th><th>Propriétaire</th><th>Code</th><th class="num">Membres</th><th class="num">Salons</th><th class="num">Messages</th><th></th></tr></thead><tbody id="sbody"></tbody></table></div>
+      <div class="tablebox"><table><thead><tr><th>Nom</th><th>Partenaire</th><th>Propriétaire</th><th>Code</th><th class="num">Membres</th><th class="num">Salons</th><th class="num">Messages</th><th></th></tr></thead><tbody id="sbody"></tbody></table></div>
     </section>
 
     <section id="s-messages" hidden>
@@ -268,7 +269,22 @@ td.act { white-space: nowrap; text-align: right; } td.act .btn + .btn { margin-l
         var b = $("sbody"); b.innerHTML = "";
         list.forEach(function (s) {
           var tr = el("tr"), c = el("div"); c.appendChild(el("span", "", s.name)); if (s.isDefault) c.appendChild(el("span", "badge b-on", "par défaut"));
-          cell(tr, c); cell(tr, s.owner || "—"); cell(tr, s.code); cell(tr, String(s.members), "num"); cell(tr, String(s.channels), "num"); cell(tr, String(s.messages), "num");
+          if (s.partner) { var lg = s.logo ? el("img", "plogo") : null; if (lg) { lg.src = "/files/" + s.logo; lg.alt = ""; c.insertBefore(lg, c.firstChild); } c.appendChild(el("span", "badge b-on", "partenaire")); }
+          cell(tr, c);
+          var pc = el("div", "pact");
+          pc.appendChild(btn(s.partner ? "Retirer le partenariat" : "Marquer partenaire", s.partner ? "" : "", function () {
+            api("POST", "/servers/" + s.id + "/partner", { partner: !s.partner }).then(function () { flash(s.partner ? "Partenariat retiré." : "Serveur partenaire."); load.servers(); }).catch(fail);
+          }));
+          var fi = el("input"); fi.type = "file"; fi.accept = "image/png,image/jpeg,image/gif,image/webp"; fi.hidden = true;
+          fi.onchange = function () {
+            var f = fi.files[0]; if (!f) return;
+            fetch("/api/admin/servers/" + s.id + "/logo", { method: "POST", headers: { "Authorization": "Bearer " + token, "Content-Type": "application/octet-stream" }, body: f })
+              .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "Erreur."); }); })
+              .then(function () { flash("Logo enregistré."); load.servers(); }).catch(fail);
+          };
+          pc.appendChild(btn(s.logo ? "Changer le logo" : "Ajouter un logo", "", function () { fi.click(); })); pc.appendChild(fi);
+          if (s.logo) pc.appendChild(btn("Retirer le logo", "", function () { api("DELETE", "/servers/" + s.id + "/logo").then(function () { flash("Logo retiré."); load.servers(); }).catch(fail); }));
+          cell(tr, pc); cell(tr, s.owner || "—"); cell(tr, s.code); cell(tr, String(s.members), "num"); cell(tr, String(s.channels), "num"); cell(tr, String(s.messages), "num");
           var a = el("div");
           if (!s.isDefault) a.appendChild(btn("Supprimer", "danger", function () {
             if (!confirm("Supprimer le serveur « " + s.name + " » avec ses salons et ses " + s.messages + " messages ? Irréversible.")) return;

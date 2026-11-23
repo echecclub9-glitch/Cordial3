@@ -271,3 +271,10 @@ label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .04em
 .srow .mini{margin-top:6px}
 .stype.t-ban,.stype.t-kick{color:#ed4245}.stype.t-warn{color:#faa61a}.stype.t-mute{color:#e6c04a}
 .ch .hash svg{vertical-align:-3px}
+
+/* Serveur partenaire : logo devant le nom */
+#sName { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#sName .sn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.plogo { width: 24px; height: 24px; border-radius: 6px; object-fit: cover; flex: none; }
+.plogo.ph { display: grid; place-items: center; background: var(--accent); color: #fff; }
+.pbadge { flex: none; font: 700 10px var(--font); letter-spacing: .05em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: var(--accent); color: #fff; }
