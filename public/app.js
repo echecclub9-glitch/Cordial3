@@ -118,7 +118,7 @@
       if (d.banned) toast("Vous avez été banni de « " + d.name + " » " + (d.until ? "jusqu'au " + WHEN(d.until) : "définitivement") + (d.reason ? " — " + d.reason : "") + ".");
       else toast("Vous avez été expulsé de « " + d.name + " »." + (d.reason ? " Motif : " + d.reason : ""));
     });
-    sock.on("serverUpdated", (d) => { const s = S.servers.find((x) => x.id === d.serverId); if (!s) return; s.partner = d.partner; s.logo = d.logo; if (d.name) { s.name = d.name; s.abbr = d.abbr; } s.icon = d.icon; s.banner = d.banner; renderRail(); renderSide(); if (S.imgRefresh) S.imgRefresh(); });
+    sock.on("serverUpdated", (d) => { const s = S.servers.find((x) => x.id === d.serverId); if (!s) return; s.partner = d.partner; s.logo = d.logo; if (d.name) { s.name = d.name; s.abbr = d.abbr; } s.icon = d.icon; s.banner = d.banner; if (d.owner !== undefined && d.owner !== s.owner) { s.owner = d.owner; loadRoles(s.id); loadMembers(s.id); } renderRail(); renderSide(); if (S.imgRefresh) S.imgRefresh(); });
     sock.on("channelsChanged", (d) => refreshChannels(d.serverId));
     sock.on("forceVoiceLeave", (d) => { if (V.sid === d.serverId) leaveVoice(); });
     sock.on("sanction", (d) => {
@@ -131,6 +131,7 @@
     sock.on("channelUpdated", (d) => { const s = S.servers.find((x) => x.id === d.serverId); if (!s) return; s.channels = s.channels.map((c) => (c.id === d.channel.id ? d.channel : c)); renderAll(); });
     sock.on("channelDeleted", onChannelDeleted);
     sock.on("serverDeleted", onServerDeleted);
+    sock.on("serverLeft", (d) => onServerDeleted({ serverId: d.serverId, quiet: true }));
     sock.on("userDeleted", (d) => { Object.keys(S.msgs).forEach((k) => { S.msgs[k] = S.msgs[k].filter((m) => m.user.id !== d.userId); }); loadMembers(S.sid); renderMsgs(); });
     sock.on("dmOpened", (d) => { if (!dmOf(d.id)) S.dms.push(d); renderSide(); renderRail(); });
     sock.on("roleChanged", (d) => { S.me.role = d.role; renderMe(); renderMsgs(); toast(d.role === "mod" ? "Vous êtes maintenant modérateur." : "Votre rôle de modérateur a été retiré."); });
@@ -224,7 +225,7 @@
   function onServerDeleted(d) {
     S.servers = S.servers.filter((s) => s.id !== d.serverId);
     if (V.sid === d.serverId) leaveVoice(true);
-    if (S.sid === d.serverId && S.view === "server") { S.sid = S.servers[0] && S.servers[0].id; go("server", S.sid, firstText(server())); toast("Ce serveur a été supprimé."); } else renderAll();
+    if (S.sid === d.serverId && S.view === "server") { S.sid = S.servers[0] && S.servers[0].id; go("server", S.sid, firstText(server())); if (!d.quiet) toast("Ce serveur a été supprimé."); } else renderAll();
   }
 
   /* ---------- Navigation ---------- */
@@ -878,6 +879,23 @@
     const bye = el("button", "btn ghost", "Fermer"); bye.type = "button"; card.appendChild(bye);
     const close = overlay(card); bye.onclick = () => { S.imgRefresh = null; close(); };
   }
+  function leaveServerModal() {
+    const s = server(); if (!s) return; const sid = s.id;
+    modal({ title: "Quitter « " + s.name + " » ?", sub: "Vous perdrez l'accès à ses salons et vos rôles. Vous pourrez revenir avec le code d'invitation.", buttons: [
+      { label: "Quitter le serveur", danger: true, run: (m) => S.sock.emit("leaveServer", { serverId: sid }, (r) => { if (r && r.error) m.error(r.error); else { m.close(); toast("Vous avez quitté « " + s.name + " »."); } }) }, { label: "Annuler", ghost: true }] });
+  }
+  function deleteServerModal() {
+    const s = server(); if (!s) return; const sid = s.id;
+    modal({ title: "Supprimer « " + s.name + " »", sub: "Tous les salons, messages et fichiers seront effacés pour tout le monde. Impossible à annuler.", fields: [{ id: "n", label: "Tapez le nom du serveur pour confirmer", ph: s.name, max: 30 }], buttons: [
+      { label: "Supprimer définitivement", danger: true, run: (m) => S.sock.emit("deleteServer", { serverId: sid, name: m.v("n") }, (r) => { if (r && r.error) m.error(r.error); else m.close(); }) }, { label: "Annuler", ghost: true }] });
+  }
+  function transferModal() {
+    const s = server(); if (!s) return; const sid = s.id;
+    const others = (S.members[sid] || []).filter((u) => u.id !== S.me.id && u.role !== "bot");
+    if (!others.length) return toast("Aucun autre membre à qui transférer le serveur.");
+    modal({ title: "Transférer la propriété", sub: "La personne choisie deviendra propriétaire de « " + s.name + " » avec tous les droits. Vous resterez simple membre (vos rôles sont conservés).", fields: [{ id: "u", label: "Nouveau propriétaire", type: "select", options: others.map((u) => [u.id, u.name]), value: others[0].id }], buttons: [
+      { label: "Transférer", danger: true, run: (m) => S.sock.emit("transferServer", { serverId: sid, userId: Number(m.v("u")) }, (r) => { if (r && r.error) m.error(r.error); else { m.close(); toast("Propriété transférée."); } }) }, { label: "Annuler", ghost: true }] });
+  }
   function renameServerModal() {
     const s = server(); if (!s) return;
     modal({ title: "Renommer le serveur", fields: [{ id: "n", label: "Nom du serveur", value: s.name, max: 30 }], buttons: [
@@ -889,12 +907,15 @@
     const hd = el("h2", "sethd"); nameWithLogo(hd, s); card.appendChild(hd);
     card.appendChild(el("p", "sub", "Paramètres du serveur"));
     let close = () => {};
-    const row = (icon, title, desc, fn) => { const b = el("button", "setrow"); b.type = "button"; const i = el("span", "seti"); i.innerHTML = ic(icon, 20); const t = el("span", "sett"); t.append(el("b", "", title), el("small", "", desc)); b.append(i, t); b.onclick = () => { close(); fn(); }; card.appendChild(b); };
+    const row = (icon, title, desc, fn, danger) => { const b = el("button", "setrow" + (danger ? " danger" : "")); b.type = "button"; const i = el("span", "seti"); i.innerHTML = ic(icon, 20); const t = el("span", "sett"); t.append(el("b", "", title), el("small", "", desc)); b.append(i, t); b.onclick = () => { close(); fn(); }; card.appendChild(b); };
     row("user", "Inviter des amis", "Code d'invitation : " + s.code, inviteModal);
     if (s.owner === S.me.id || isStaff()) { row("edit", "Renommer le serveur", "Actuellement : " + s.name, renameServerModal); row("image", "Image et bannière", "Photo du serveur et bandeau d'en-tête", serverImagesModal); }
     if (canIn(PERM.CHANNELS)) row("plus", "Créer un salon", "Texte ou vocal, public ou privé", channelCreateModal);
     if (canIn(PERM.ROLES)) row("shield", "Rôles et permissions", "Créer des rôles, choisir leurs droits", rolesModal);
     if (canMod()) row("alert", "Sanctions", "Bannis, sourdines en cours et historique", sanctionsPanel);
+    if (s.owner === S.me.id) row("users", "Transférer la propriété", "Donner le serveur à un autre membre", transferModal);
+    if (s.owner === S.me.id) { if (!s.isDefault) row("trash", "Supprimer le serveur", "Définitif : salons, messages et fichiers", deleteServerModal, true); }
+    else row("log-out", "Quitter le serveur", "Vous pourrez revenir avec le code d'invitation", leaveServerModal, true);
     card.appendChild(el("p", "setinfo", (s.partner ? "Serveur partenaire de Cordial · " : "") + (((S.members[s.id] || []).length) || "—") + " membre(s) · " + s.channels.length + " salon(s)"));
     const bye = el("button", "btn ghost", "Fermer"); bye.type = "button"; card.appendChild(bye);
     close = overlay(card); bye.onclick = close;

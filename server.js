@@ -124,7 +124,7 @@ for (const sql of [
   "ALTER TABLE channels ADD COLUMN readonly INTEGER NOT NULL DEFAULT 0", "ALTER TABLE messages ADD COLUMN edited INTEGER",
   "ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", "ALTER TABLE messages ADD COLUMN poll TEXT",
   "ALTER TABLE messages ADD COLUMN reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL",
-  "ALTER TABLE servers ADD COLUMN partner INTEGER NOT NULL DEFAULT 0", "ALTER TABLE servers ADD COLUMN partner_logo TEXT", "ALTER TABLE users ADD COLUMN avatar TEXT", "ALTER TABLE users ADD COLUMN banner TEXT",
+  "ALTER TABLE servers ADD COLUMN partner INTEGER NOT NULL DEFAULT 0", "ALTER TABLE servers ADD COLUMN partner_logo TEXT", "ALTER TABLE servers ADD COLUMN icon TEXT", "ALTER TABLE servers ADD COLUMN banner TEXT", "ALTER TABLE users ADD COLUMN avatar TEXT", "ALTER TABLE users ADD COLUMN banner TEXT",
   "ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''", "ALTER TABLE users ADD COLUMN custom TEXT NOT NULL DEFAULT ''",
   "ALTER TABLE files ADD COLUMN purpose TEXT",
   "ALTER TABLE channels ADD COLUMN private INTEGER NOT NULL DEFAULT 0",
@@ -406,6 +406,42 @@ app.delete("/api/profile/image", (req, res) => {
   setProfileImage(user, kind, null); broadcastProfile(q.userById.get(user.id)); res.json({ ok: true });
 });
 
+/* ---------- Image et bannière d'un serveur : propriétaire ou équipe du site ---------- */
+const SRV_IMG = { icon: 1024 * 1024, banner: 3 * 1024 * 1024 };
+function serverImageTarget(req, res) {
+  const user = authBearer(req); if (!user) { res.status(401).json({ error: "Connexion requise." }); return null; }
+  const s = q.serverById.get(Number(req.params.id)), kind = req.query.kind;
+  if (!s || s.id === DM_SERVER || (!q.isMember.get(s.id, user.id) && !isStaff(user))) { res.status(404).json({ error: "Serveur introuvable." }); return null; }
+  if (s.owner_id !== user.id && !isStaff(user)) { res.status(403).json({ error: "Seul le propriétaire peut modifier les images du serveur." }); return null; }
+  if (kind !== "icon" && kind !== "banner") { res.status(400).json({ error: "Type d'image invalide." }); return null; }
+  if (hit(profileHits, user.id, 60000, 12)) { res.status(429).json({ error: "Trop de changements, patientez un instant." }); return null; }
+  return { user, s, kind };
+}
+function setServerImage(s, kind, buf, userId) {
+  let id = null;
+  if (buf) {
+    const ext = IMG_EXT.find((e) => FILE_TYPES[e].ok(buf)); if (!ext) return false;
+    id = crypto.randomBytes(16).toString("hex");
+    fs.writeFileSync(path.join(UPLOAD_DIR, id), buf);
+    db.prepare("INSERT INTO files (id, user_id, name, mime, size, ts, purpose) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, userId, "srv" + kind + "." + ext, FILE_TYPES[ext].mime, buf.length, Date.now(), "srv" + kind);
+  }
+  db.prepare("UPDATE servers SET " + kind + " = ? WHERE id = ?").run(id, s.id); dropProfileImage(s[kind]);
+  io.to("srv:" + s.id).emit("serverUpdated", partnerPublic(q.serverById.get(s.id)));
+  return true;
+}
+app.post("/api/servers/:id/image", express.raw({ type: () => true, limit: SRV_IMG.banner }), (req, res) => {
+  const t = serverImageTarget(req, res); if (!t) return;
+  const buf = req.body;
+  if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: "Image vide." });
+  if (buf.length > SRV_IMG[t.kind]) return res.status(413).json({ error: "Image trop lourde (" + (SRV_IMG[t.kind] / 1048576) + " Mo maximum)." });
+  if (!setServerImage(t.s, t.kind, buf, t.user.id)) return res.status(415).json({ error: "Format non accepté (PNG, JPG, GIF ou WebP)." });
+  res.json({ ok: true });
+});
+app.delete("/api/servers/:id/image", (req, res) => {
+  const t = serverImageTarget(req, res); if (!t) return;
+  setServerImage(t.s, t.kind, null, t.user.id); res.json({ ok: true });
+});
+
 // L'identifiant (32 caractères aléatoires) sert de lien secret : il n'est connu que de ceux qui voient le message.
 app.get("/files/:id", (req, res) => {
   const f = /^[0-9a-f]{32}$/.test(req.params.id) && q.fileById.get(req.params.id);
@@ -422,6 +458,14 @@ app.get("/files/:id", (req, res) => {
   }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
 });
 
+// Suppression complète d'un serveur : fichiers, vocal en cours, salles temps réel, images
+function destroyServer(s) {
+  const room = "srv:" + s.id;
+  db.prepare("SELECT m.id FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.server_id = ?").all(s.id).forEach((m) => removeFiles(m.id));
+  q.channelsOf.all(s.id).forEach((c) => { voiceRooms.delete(c.id); io.in("voice:" + c.id).emit("voiceEnded", { channelId: c.id }); io.in("voice:" + c.id).socketsLeave("voice:" + c.id); });
+  io.to(room).emit("serverDeleted", { serverId: s.id }); io.in(room).socketsLeave(room);
+  db.prepare("DELETE FROM servers WHERE id = ?").run(s.id); [s.partner_logo, s.icon, s.banner].forEach(dropProfileImage);
+}
 function removeFiles(messageId) {
   q.filesOfMessage.all(messageId).forEach((f) => fs.unlink(path.join(UPLOAD_DIR, f.id), () => {}));
 }
@@ -509,7 +553,7 @@ function chView(c, viewer) {
 }
 const visibleChannels = (sid, user) => q.channelsOf.all(sid).filter((c) => canSee(user, c)).map((c) => chView(c, user));
 function serverView(s, user) {
-  return { id: s.id, name: s.name, abbr: s.abbr, code: s.code, owner: s.owner_id, partner: !!s.partner, logo: s.partner ? s.partner_logo : null, channels: visibleChannels(s.id, user) };
+  return { id: s.id, name: s.name, abbr: s.abbr, code: s.code, owner: s.owner_id, partner: !!s.partner, logo: s.partner ? s.partner_logo : null, icon: s.icon, banner: s.banner, isDefault: s.id === DEFAULT_SERVER, channels: visibleChannels(s.id, user) };
 }
 function rosterOf(channelId) {
   const room = voiceRooms.get(channelId);
@@ -863,6 +907,46 @@ io.on("connection", (socket) => {
   }));
 
   /* --- Serveurs et salons --- */
+  /* Quitter, transférer, supprimer */
+  socket.on("leaveServer", guard(({ serverId }, ack) => {
+    const s = q.serverById.get(serverId);
+    if (!s || s.id === DM_SERVER || !q.isMember.get(s.id, uid)) return ack({ error: "Serveur introuvable." });
+    if (s.owner_id === uid) return ack({ error: "Vous êtes propriétaire : transférez le serveur à quelqu'un d'autre ou supprimez-le." });
+    removeMember(s.id, uid);
+    socket.emit("serverLeft", { serverId: s.id });
+    io.in("user:" + uid).socketsLeave("srv:" + s.id);
+    io.to("srv:" + s.id).emit("membersChanged", { serverId: s.id }); ack({ ok: true });
+  }));
+  socket.on("transferServer", guard(({ serverId, userId }, ack) => {
+    const s = q.serverById.get(serverId), t = q.userById.get(Number(userId));
+    if (!s || s.id === DM_SERVER || !q.isMember.get(s.id, uid)) return ack({ error: "Serveur introuvable." });
+    if (s.owner_id !== uid) return ack({ error: "Seul le propriétaire peut transférer le serveur." });
+    if (!t || t.id === uid || t.role === "bot" || t.banned || !q.isMember.get(s.id, t.id)) return ack({ error: "Choisissez un autre membre du serveur." });
+    db.prepare("UPDATE servers SET owner_id = ? WHERE id = ?").run(t.id, s.id);
+    io.to("srv:" + s.id).emit("serverUpdated", partnerPublic(q.serverById.get(s.id)));
+    io.to("srv:" + s.id).emit("rolesChanged", { serverId: s.id }); io.to("srv:" + s.id).emit("membersChanged", { serverId: s.id });
+    ack({ ok: true });
+  }));
+  socket.on("deleteServer", guard(({ serverId, name }, ack) => {
+    const s = q.serverById.get(serverId);
+    if (!s || s.id === DM_SERVER || !q.isMember.get(s.id, uid)) return ack({ error: "Serveur introuvable." });
+    if (s.owner_id !== uid) return ack({ error: "Seul le propriétaire peut supprimer le serveur." });
+    if (s.id === DEFAULT_SERVER) return ack({ error: "Le serveur par défaut ne peut pas être supprimé." });
+    if (String(name || "").trim() !== s.name) return ack({ error: "Pour confirmer, tapez le nom exact du serveur." });
+    destroyServer(s); ack({ ok: true });
+  }));
+
+  // Renommer : propriétaire du serveur ou équipe du site
+  socket.on("renameServer", guard(({ serverId, name }, ack) => {
+    user = cur();
+    const s = q.serverById.get(serverId);
+    if (!s || s.id === DM_SERVER || !q.isMember.get(s.id, uid)) return ack({ error: "Serveur introuvable." });
+    if (s.owner_id !== uid && !isStaff(user)) return ack({ error: "Seul le propriétaire peut renommer le serveur." });
+    const n = clean(name, 30); if (n.length < 2) return ack({ error: "Nom trop court (2 caractères minimum)." });
+    db.prepare("UPDATE servers SET name = ?, abbr = ? WHERE id = ?").run(n, abbr(n), s.id);
+    io.to("srv:" + s.id).emit("serverUpdated", partnerPublic(q.serverById.get(s.id))); ack({ ok: true });
+  }));
+
   socket.on("createServer", guard(({ name }, ack) => {
     name = clean(name, 30); if (name.length < 2) return ack({ error: "Nom trop court (2 caractères minimum)." });
     const s = tx(() => {
@@ -1265,7 +1349,7 @@ admin.get("/servers", requireAdmin, (req, res) => res.json(db.prepare(`SELECT s.
   FROM servers s LEFT JOIN users o ON o.id = s.owner_id WHERE s.name != '__dm__' ORDER BY s.id`).all().map((s) => ({ ...s, isDefault: s.id === DEFAULT_SERVER }))));
 
 /* Serveurs partenaires : badge « Partenaire » et logo affiché devant le nom, pour tous les membres */
-const partnerPublic = (s) => ({ serverId: s.id, partner: !!s.partner, logo: s.partner ? s.partner_logo : null });
+const partnerPublic = (s) => ({ serverId: s.id, owner: s.owner_id, name: s.name, abbr: s.abbr, icon: s.icon, banner: s.banner, partner: !!s.partner, logo: s.partner ? s.partner_logo : null });
 const partnerTarget = (req, res) => {
   const s = q.serverById.get(Number(req.params.id));
   if (!s || s.id === DM_SERVER) { res.status(404).json({ error: "Serveur introuvable." }); return null; }
@@ -1300,11 +1384,7 @@ admin.delete("/servers/:id", requireAdmin, (req, res) => {
   const s = q.serverById.get(Number(req.params.id));
   if (!s || s.id === DM_SERVER) return res.status(404).json({ error: "Serveur introuvable." });
   if (s.id === DEFAULT_SERVER) return res.status(400).json({ error: "Le serveur par défaut ne peut pas être supprimé." });
-  const room = "srv:" + s.id;
-  db.prepare("SELECT m.id FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.server_id = ?").all(s.id).forEach((m) => removeFiles(m.id));
-  q.channelsOf.all(s.id).forEach((c) => { voiceRooms.delete(c.id); io.in("voice:" + c.id).emit("voiceEnded", { channelId: c.id }); io.in("voice:" + c.id).socketsLeave("voice:" + c.id); });
-  io.to(room).emit("serverDeleted", { serverId: s.id }); io.in(room).socketsLeave(room);
-  db.prepare("DELETE FROM servers WHERE id = ?").run(s.id); dropProfileImage(s.partner_logo);
+  destroyServer(s);
   audit(req, "Serveur supprimé", s.name); res.json({ ok: true });
 });
 
