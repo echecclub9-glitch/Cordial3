@@ -106,6 +106,7 @@
     sock.on("connect_error", (err) => { if (err.message === "auth") { store("cordial-token", null); S.token = null; sock.disconnect(); showAuth(); } else $("banner").hidden = false; });
     sock.on("ready", onReady);
     sock.on("message", onMessage);
+    sock.on("notifMutes", (list) => { S.nm = list; renderAll(); });
     sock.on("edited", (d) => patch(d.channelId, d.id, (m) => { m.text = d.text; m.edited = d.edited; }));
     sock.on("pinned", (d) => { patch(d.channelId, d.id, (m) => { m.pinned = d.pinned; }); if (S.panel === "pins" && d.channelId === S.cid) loadPins(); });
     sock.on("reactions", (d) => patch(d.channelId, d.id, (m) => { m.reactions = d.reactions; m.poll = d.poll; }));
@@ -151,7 +152,7 @@
   }
   function patch(cid, id, fn) { const l = S.msgs[cid]; if (!l) return; l.forEach((m) => { if (m.id === id) fn(m); }); if (cid === S.cid) renderMsgs(); if (S.panel) renderPanelKeep(); }
   function onReady(d) {
-    S.me = d.me; S.servers = d.servers; S.dms = d.dms; S.ice = d.ice;
+    S.me = d.me; S.servers = d.servers; S.dms = d.dms; S.ice = d.ice; S.nm = d.notifMutes || [];
     if (S.view === "dm") { if (!dmOf(S.cid)) S.cid = S.dms[0] ? S.dms[0].id : null; }
     else {
       if (!server()) { S.sid = S.servers[0] && S.servers[0].id; S.cid = null; }
@@ -163,7 +164,7 @@
     if (S.cid) loadHistory(S.cid);
     renderAll(); initPush();
   }
-  const PERM = { MESSAGES: 1, CHANNELS: 2, ROLES: 4, KICK: 8, VIP: 16, BAN: 32, MUTE: 64 };
+  const PERM = { MESSAGES: 1, CHANNELS: 2, ROLES: 4, KICK: 8, VIP: 16, BAN: 32, MUTE: 64, EVERYONE: 128 };
   const canMod = () => canIn(PERM.KICK) || canIn(PERM.BAN) || canIn(PERM.MUTE);
   function loadRoles(sid) {
     if (sid == null) return;
@@ -187,13 +188,28 @@
       if (before) { const box = $("msgs"), h = box.scrollHeight; renderMsgs(false); box.scrollTop = box.scrollHeight - h; } else renderMsgs(true);
     });
   }
+  /* ---------- Sourdine des notifications (salon ou serveur) ---------- */
+  const nmEntry = (kind, id) => (S.nm || []).find((x) => x.kind === kind && x.id === id && (x.until === null || x.until > Date.now()));
+  const serverOfChannel = (cid) => S.servers.find((s) => s.channels.some((c) => c.id === cid));
+  const chMuted = (cid) => { if (nmEntry("channel", cid)) return true; const s = serverOfChannel(cid); return !!s && !!nmEntry("server", s.id); };
+  // Un salon en sourdine ne signale que les mentions directes de mon nom
+  const directPing = (m) => (m.text || "").toLowerCase().includes("@" + S.me.name.toLowerCase());
+  const quiet = (m) => S.me.status === "dnd" || (chMuted(m.channelId) && !directPing(m));
+  function muteLabel(e) { return e ? (e.until === null ? "jusqu'à ce que vous les réactiviez" : "jusqu'à " + WHEN(e.until)) : ""; }
+  function notifMuteModal(kind, id, title) {
+    const cur = nmEntry(kind, id);
+    modal({ title: "Notifications : " + title, sub: cur ? "En sourdine " + muteLabel(cur) + ". Seules les mentions de votre nom vous préviennent encore." : "Mettre en sourdine : plus de pastille ni de notification, sauf si on cite votre nom.", fields: [{ id: "d", label: "Durée", type: "select", options: [["15", "15 minutes"], ["60", "1 heure"], ["480", "8 heures"], ["1440", "24 heures"], ["forever", "Jusqu'à ce que je les réactive"]], value: "480" }], buttons: [
+      { label: "Mettre en sourdine", run: (m) => { const v = m.v("d"); S.sock.emit("notifMute", { kind, id, minutes: v === "forever" ? null : Number(v) }, (r) => { if (r && r.error) m.error(r.error); else { m.close(); toast("Notifications en sourdine."); } }); } },
+      ...(cur ? [{ label: "Réactiver", ghost: true, run: (m) => S.sock.emit("notifMute", { kind, id, off: true }, (r) => { if (r && r.error) m.error(r.error); else { m.close(); toast("Notifications réactivées."); } }) }] : []),
+      { label: "Annuler", ghost: true }] });
+  }
   function onMessage(m) {
     const mine = m.user.id === S.me.id;
     if (S.msgs[m.channelId]) S.msgs[m.channelId].push(m);
     if (m.channelId === S.cid) renderMsgs(true, true);
-    else if (!mine) { S.unread[m.channelId] = (S.unread[m.channelId] || 0) + 1; renderSide(); renderRail(); updateTitle(); }
-    if (document.hidden && !mine) { S.pendingTitle++; updateTitle(); }
-    if (!mine) notifyLocal(m);
+    else if (!mine && !(chMuted(m.channelId) && !directPing(m))) { S.unread[m.channelId] = (S.unread[m.channelId] || 0) + 1; renderSide(); renderRail(); updateTitle(); }
+    if (document.hidden && !mine && !quiet(m)) { S.pendingTitle++; updateTitle(); }
+    if (!mine && !quiet(m)) notifyLocal(m);
   }
   function onProfile(p) {
     S.prof[p.id] = p;
@@ -249,7 +265,7 @@
     home.onclick = () => go("dm", null, dmOf(S.cid) ? S.cid : S.dms[0] ? S.dms[0].id : null);
     r.appendChild(home); r.appendChild(el("div", "sep"));
     S.servers.forEach((s) => {
-      const b = el("button", "srv" + (S.view === "server" && s.id === S.sid ? " on" : "") + (s.icon ? " img" : ""), s.icon ? "" : s.abbr); if (s.icon) b.style.backgroundImage = "url(/files/" + s.icon + ")"; b.title = s.name; b.setAttribute("aria-label", s.name);
+      const b = el("button", "srv" + (S.view === "server" && s.id === S.sid ? " on" : "") + (s.icon ? " img" : "") + (nmEntry("server", s.id) ? " muted" : ""), s.icon ? "" : s.abbr); b.oncontextmenu = (e) => { e.preventDefault(); notifMuteModal("server", s.id, s.name); }; if (s.icon) b.style.backgroundImage = "url(/files/" + s.icon + ")"; b.title = s.name; b.setAttribute("aria-label", s.name);
       const u = s.channels.reduce((a, c) => a + (S.unread[c.id] || 0), 0);
       if (u && !(S.view === "server" && s.id === S.sid)) b.appendChild(el("span", "dot", String(u)));
       b.onclick = () => go("server", s.id, firstText(s));
@@ -291,11 +307,13 @@
       box.appendChild(el("div", "cat", cat));
       s.channels.filter((c) => c.category === cat).forEach((c) => {
         const row = el("div", "chrow"), voice = c.kind === "voice", u = S.unread[c.id] || 0;
-        const b = el("button", "ch" + (!voice && c.id === S.cid ? " on" : "") + (u ? " unread" : ""));
+        const b = el("button", "ch" + (!voice && c.id === S.cid ? " on" : "") + (u ? " unread" : "") + (chMuted(c.id) ? " muted" : ""));
         { const h = el("span", "hash"); if (c.private) { h.innerHTML = ic("lock", 16); h.title = "Salon privé"; } else if (voice) h.innerHTML = ic("volume", 18); else h.textContent = "#"; b.appendChild(h); } b.appendChild(el("span", "", c.name));
         if (u && c.id !== S.cid) b.appendChild(el("span", "badge", String(u)));
         else if (c.readonly) b.appendChild(el("span", "lock", "🔒"));
         else if (c.slowmode) { const sl = el("span", "lock", "🐢"); sl.title = "Mode lent"; b.appendChild(sl); }
+        if (chMuted(c.id) && !(u && c.id !== S.cid)) { const mu = el("span", "lock"); mu.innerHTML = ic("bell-off", 14); mu.title = "Notifications en sourdine"; b.appendChild(mu); }
+        b.oncontextmenu = (e) => { e.preventDefault(); notifMuteModal("channel", c.id, "#" + c.name); };
         b.onclick = () => (voice ? joinVoice(c) : go("server", s.id, c.id));
         row.appendChild(b);
         if (canManage) { const g = icText(el("button", "gear"), "sliders"); g.title = "Réglages du salon"; g.setAttribute("aria-label", "Réglages du salon " + c.name); g.onclick = () => channelSettingsModal(c); row.appendChild(g); }
@@ -329,7 +347,14 @@
     }
     group("En ligne", on); group("Hors ligne", off);
   }
+  $("bMute").onclick = () => { const c = channel(); if (c) notifMuteModal("channel", c.id, (c.kind === "dm" ? "@ " : "#") + c.name); };
+  function renderMuteBtn() {
+    const b = $("bMute"), c = channel(); b.hidden = !c; if (!c) return;
+    const on = chMuted(c.id); b.innerHTML = ic(on ? "bell-off" : "bell"); b.classList.toggle("active", on);
+    b.title = on ? "Notifications en sourdine : cliquer pour modifier" : "Mettre ce salon en sourdine"; b.setAttribute("aria-label", b.title);
+  }
   function renderTop() {
+    renderMuteBtn();
     const c = channel();
     $("tName").textContent = c ? (c.kind === "dm" ? "@ " : "# ") + c.name : "";
     $("tTopic").textContent = c ? c.topic : "";
@@ -347,8 +372,23 @@
   setInterval(() => { const c = channel(); if (c && (S.cool[c.id] || ((S.roles[S.sid] || {}).mutedUntil || 0))) updateComposer(); }, 500);
 
   /* ---------- Rendu : messages ---------- */
+  // Rôles : « @Équipe Vip » s'écrit @Équipe-Vip (casse ignorée, espaces remplacés par des tirets)
+  const roleKey = (name) => String(name).toLowerCase().replace(/\s+/g, "-");
+  const rolesOfServer = () => ((S.roles[S.sid] || {}).roles || []);
+  function myRoleKeys() {
+    const me = ((S.members[S.sid] || []).find((u) => u.id === S.me.id) || {}).roles || [];
+    return rolesOfServer().filter((r) => me.includes(r.id)).map((r) => roleKey(r.name));
+  }
+  // Ce message me concerne-t-il : mon nom, un de mes rôles, ou @everyone (autorisé par le serveur) ?
+  function pingsMe(m) {
+    if (m.user.id === S.me.id || S.view === "dm") return false;
+    const t = (m.text || "").toLowerCase();
+    if (t.includes("@" + S.me.name.toLowerCase()) || m.mentionAll) return true;
+    return myRoleKeys().some((k) => new RegExp("(?<![\\p{L}\\p{N}_.-])@" + k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![\\p{L}\\p{N}_-])", "u").test(t));
+  }
   function richText(box, text) {
     const names = ((S.view === "dm" ? [] : S.members[S.sid]) || []).map((m) => "@" + m.name.toLowerCase());
+    const rl = {}; (S.view === "dm" ? [] : rolesOfServer()).forEach((r) => { rl["@" + roleKey(r.name)] = r.color; });
     text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*\s][^*]*\*|https?:\/\/[^\s<]+|@[\p{L}\p{N}_-]+)/gu).forEach((part) => {
       if (!part) return;
       if (part[0] === "`" && part.length > 2) box.appendChild(el("code", "", part.slice(1, -1)));
@@ -356,6 +396,7 @@
       else if (part[0] === "*" && part.length > 2) box.appendChild(el("em", "", part.slice(1, -1)));
       else if (/^https?:\/\//.test(part)) { const a = el("a", "", part); a.href = part; a.target = "_blank"; a.rel = "noopener noreferrer"; box.appendChild(a); }
       else if (part[0] === "@" && names.indexOf(part.toLowerCase()) > -1) box.appendChild(el("span", "mn", part));
+      else if (part[0] === "@" && S.view !== "dm" && (part.toLowerCase() in rl || /^@(everyone|tous)$/i.test(part))) { const s = el("span", "mn role", part); const c = rl[part.toLowerCase()]; if (c) { s.style.color = c; s.style.background = c + "22"; } box.appendChild(s); }
       else box.appendChild(document.createTextNode(part));
     });
   }
@@ -389,7 +430,7 @@
   function msgNode(m, prev, compact) {
     const mine = m.user.id === S.me.id, meTag = "@" + S.me.name.toLowerCase();
     const first = compact || !prev || prev.user.id !== m.user.id || m.ts - prev.ts > 300000 || !!m.reply || !!prev.poll;
-    const row = el("div", "m" + (first ? " first" : "") + (!mine && m.text.toLowerCase().includes(meTag) ? " ping" : "")); row.dataset.id = m.id;
+    const row = el("div", "m" + (first ? " first" : "") + (pingsMe(m) ? " ping" : "")); row.dataset.id = m.id;
     if (first) { const av = avatar(m.user); av.onclick = (e) => userMenu(e, m.user); row.appendChild(av); } else row.appendChild(el("div", "gut", hhmm(m.ts)));
     const body = el("div", "body");
     if (m.reply) {
@@ -517,6 +558,8 @@
   });
   $("inp").addEventListener("keydown", (e) => {
     const open = !$("cmds").hidden;
+    if (open && e.key === "Escape") { hideCmds(); return; }
+    if (open && e.key === "Enter" && (cmdMatches()[S.cmdIdx] || {}).mention) { e.preventDefault(); pickCmd(cmdMatches()[S.cmdIdx]); return; }
     if (open && (e.key === "Tab" || e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault(); const items = cmdMatches();
       if (e.key === "Tab") pickCmd(items[S.cmdIdx] || items[0]); else { S.cmdIdx = (S.cmdIdx + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length; updateCmds(); }
@@ -525,7 +568,19 @@
       if (mine) { S.editing = mine.id; renderMsgs(); }
     }
   });
-  function cmdMatches() { const v = $("inp").value; return /^\/\S*$/.test(v) ? COMMANDS.filter((x) => x.c.startsWith(v.toLowerCase())) : []; }
+  // Suggestions : commandes « / » ou mentions « @ » (membres, rôles, @everyone)
+  function mentionMatches() {
+    if (S.view === "dm" || !S.sid) return [];
+    const inp = $("inp"), pos = inp.selectionStart == null ? inp.value.length : inp.selectionStart;
+    const m = /(^|\s)@([\p{L}\p{N}_-]*)$/u.exec(inp.value.slice(0, pos)); if (!m) return [];
+    const typed = m[2].toLowerCase(); S.mAt = pos - m[2].length - 1; S.mEnd = pos;
+    const items = [];
+    if (canIn(PERM.EVERYONE)) items.push({ k: "everyone", d: "Prévenir tous les membres" });
+    rolesOfServer().forEach((r) => items.push({ k: r.name.replace(/\s+/g, "-"), d: "Rôle" }));
+    (S.members[S.sid] || []).forEach((u) => { if (u.id !== S.me.id && u.role !== "bot") items.push({ k: u.name, d: "Membre" }); });
+    return items.filter((x) => x.k.toLowerCase().startsWith(typed)).slice(0, 8).map((x) => ({ c: "@" + x.k, d: x.d, mention: true }));
+  }
+  function cmdMatches() { const v = $("inp").value; return /^\/\S*$/.test(v) ? COMMANDS.filter((x) => x.c.startsWith(v.toLowerCase())) : mentionMatches(); }
   function updateCmds() {
     const items = cmdMatches(), box = $("cmds");
     if (!items.length) return hideCmds();
@@ -533,7 +588,12 @@
     items.forEach((x, i) => { const b = el("button", i === S.cmdIdx ? "on" : ""); b.type = "button"; b.appendChild(el("b", "", x.c)); b.appendChild(el("span", "", x.d)); b.onmousedown = (e) => { e.preventDefault(); pickCmd(x); }; box.appendChild(b); });
   }
   function hideCmds() { $("cmds").hidden = true; S.cmdIdx = 0; }
-  function pickCmd(x) { if (!x) return; $("inp").value = x.c + " "; hideCmds(); $("inp").focus(); }
+  function pickCmd(x) {
+    if (!x) return; const inp = $("inp");
+    if (x.mention) { const v = inp.value, ins = x.c + " "; inp.value = v.slice(0, S.mAt) + ins + v.slice(S.mEnd); const p = S.mAt + ins.length; inp.setSelectionRange(p, p); }
+    else inp.value = x.c + " ";
+    hideCmds(); inp.focus();
+  }
 
   function clearFile() { S.pending = null; $("fileBar").hidden = true; $("fileInput").value = ""; }
   function pickFile(file, autoSend) {
@@ -786,6 +846,7 @@
     [PERM.ROLES, "Gérer les rôles", "Créer des rôles plus bas que le sien et les attribuer"],
     [PERM.KICK, "Expulser des membres", "Retirer quelqu'un du serveur (il peut revenir avec le code)"],
     [PERM.VIP, "Parler partout", "Ignore le mode lent et la lecture seule"],
+    [PERM.EVERYONE, "Mentionner @everyone", "Prévenir tous les membres du serveur d'un seul message"],
     [PERM.BAN, "Bannir des membres", "Bloquer quelqu'un pour une durée ou définitivement, et lever un bannissement"],
     [PERM.MUTE, "Avertir et mettre en sourdine", "Envoyer un avertissement ou interdire d'écrire pendant un temps"],
   ];
@@ -834,7 +895,7 @@
         const l3 = el("label", "", "Permissions"); ed.appendChild(l3);
         const checks = PERM_LABELS.map(([flag, name, desc]) => {
           const lab = el("label", "check perm"), cb = el("input"); cb.type = "checkbox"; cb.checked = (r.perms & flag) !== 0;
-          const myPerms = isStaff() || (server() && server().owner === S.me.id) ? 127 : info.perms;
+          const myPerms = isStaff() || (server() && server().owner === S.me.id) ? 255 : info.perms;
           cb.disabled = locked || (myPerms & flag) === 0;
           const tx = el("span"); tx.append(el("b", "", name), el("small", "", desc)); lab.append(cb, tx); ed.appendChild(lab); return [flag, cb];
         });
@@ -908,6 +969,7 @@
     card.appendChild(el("p", "sub", "Paramètres du serveur"));
     let close = () => {};
     const row = (icon, title, desc, fn, danger) => { const b = el("button", "setrow" + (danger ? " danger" : "")); b.type = "button"; const i = el("span", "seti"); i.innerHTML = ic(icon, 20); const t = el("span", "sett"); t.append(el("b", "", title), el("small", "", desc)); b.append(i, t); b.onclick = () => { close(); fn(); }; card.appendChild(b); };
+    row(nmEntry("server", s.id) ? "bell-off" : "bell", "Notifications du serveur", nmEntry("server", s.id) ? "En sourdine " + muteLabel(nmEntry("server", s.id)) : "Mettre en sourdine ce serveur", () => notifMuteModal("server", s.id, s.name));
     row("user", "Inviter des amis", "Code d'invitation : " + s.code, inviteModal);
     if (s.owner === S.me.id || isStaff()) { row("edit", "Renommer le serveur", "Actuellement : " + s.name, renameServerModal); row("image", "Image et bannière", "Photo du serveur et bandeau d'en-tête", serverImagesModal); }
     if (canIn(PERM.CHANNELS)) row("plus", "Créer un salon", "Texte ou vocal, public ou privé", channelCreateModal);
@@ -1021,10 +1083,11 @@
   const DESK = !!window.cordialDesktop;
   try { S.local = DESK ? localStorage.getItem("cordial-local") !== "0" : false; } catch (e) { S.local = DESK; }
   function notifyLocal(m) {
+    if (quiet(m)) return;
     if (!S.local || S.push || !("Notification" in window) || Notification.permission !== "granted") return;
     if (document.hasFocus() && m.channelId === S.cid) return;
     const dm = dmOf(m.channelId), tag = "@" + S.me.name.toLowerCase();
-    const mention = (m.text || "").toLowerCase().includes(tag), reply = !!m.reply && m.reply.name === S.me.name;
+    const mention = pingsMe(m), reply = !!m.reply && m.reply.name === S.me.name;
     if (!dm && !mention && !reply) return;
     try {
       const n = new Notification(dm ? m.user.name : "Mention de " + m.user.name, { body: (m.text || (m.file ? "📎 fichier" : "")).slice(0, 140), tag: "c-" + m.channelId, icon: "/icons/icon-192.png" });

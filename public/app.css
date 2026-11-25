@@ -308,3 +308,10 @@ label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .04em
 .sprev.icon { width: 64px; height: 64px; border-radius: 50%; font: 600 18px var(--head); } .sprev.banner { width: 120px; height: 64px; }
 .simginfo { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; } .simginfo small { color: var(--muted); }
 .setrow.danger .sett b { color: var(--bad); } .setrow.danger:hover { background: var(--bad); } .setrow.danger:hover b { color: #fff; }
+
+/* Mentions de rôles et @everyone */
+.mn.role { border-radius: 4px; padding: 0 3px; font-weight: 600; }
+
+/* Notifications en sourdine */
+.ch.muted, .srv.muted { opacity: .55; } .ch.muted.on { opacity: 1; } .ch.muted .lock svg { vertical-align: -2px; }
+#bMute.active { color: var(--bad); }

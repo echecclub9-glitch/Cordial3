@@ -54,6 +54,10 @@ h2 { margin: 32px 0 12px; font: 600 18px var(--head); color: var(--strong); }
 .btn.sm { padding: 5px 10px; font-size: 13px; background: var(--active); color: var(--fg); } .btn.sm:hover { background: var(--hover); }
 .btn.danger { background: transparent; color: #ff7b7e; box-shadow: inset 0 0 0 1px rgba(242,63,67,.5); } .btn.danger:hover { background: var(--bad-2); color: #fff; }
 .btn.warn { color: var(--warn); }
+.btn.ghost { background: var(--active); color: var(--fg); } .btn.ghost:hover { background: var(--hover); }
+.warnbox { background: rgba(250,166,26,.12); border: 1px solid rgba(250,166,26,.5); border-radius: 8px; padding: 12px 14px; margin: 0 0 16px; color: var(--strong); }
+.pact { display: flex; gap: 6px; flex-wrap: wrap; }
+h2 + p.sub { margin-top: -6px; }
 
 .tablebox { overflow-x: auto; background: var(--side); border-radius: 8px; }
 table { width: 100%; border-collapse: collapse; min-width: 640px; }
@@ -110,6 +114,7 @@ td.act { white-space: nowrap; text-align: right; } td.act .btn + .btn { margin-l
         <button role="tab" data-t="users" aria-selected="false">Utilisateurs</button>
         <button role="tab" data-t="servers" class="adm" aria-selected="false">Serveurs</button>
         <button role="tab" data-t="messages" aria-selected="false">Messages</button>
+        <button role="tab" data-t="backup" class="adm" aria-selected="false">Sauvegardes</button>
         <button role="tab" data-t="log" class="adm" aria-selected="false">Journal</button>
       </nav>
     </div>
@@ -150,6 +155,29 @@ td.act { white-space: nowrap; text-align: right; } td.act .btn + .btn { margin-l
       <div class="msgs" id="mbody"></div>
     </section>
 
+    <section id="s-backup" hidden>
+      <h1>Sauvegardes</h1><p class="sub">Comptes, serveurs, messages et fichiers envoyés : tout ce qui fait vivre la communauté.</p>
+      <div class="warnbox" id="bkWarn" hidden></div>
+      <div class="stats" id="bkStats"></div>
+      <h2>Télécharger</h2>
+      <p class="sub">Gardez un exemplaire hors du serveur : c'est ce qui vous sauve si le disque est effacé.</p>
+      <div class="row">
+        <button class="btn" type="button" id="bkFull">Sauvegarde complète (.tar)</button>
+        <button class="btn ghost" type="button" id="bkDb">Base seule (.db)</button>
+        <button class="btn ghost" type="button" id="bkSnap">Créer un instantané</button>
+      </div>
+      <h2>Instantanés sur le serveur</h2>
+      <p class="sub">Un instantané automatique est pris chaque jour (les 7 derniers sont conservés). Ils contiennent la base, pas les fichiers envoyés.</p>
+      <div class="tablebox"><table><thead><tr><th>Instantané</th><th>Date</th><th class="num">Taille</th><th></th></tr></thead><tbody id="bkList"></tbody></table></div>
+      <h2>Restaurer</h2>
+      <p class="sub">Envoyez une sauvegarde complète (.tar) ou une base (.db). Elle est vérifiée, puis le serveur redémarre pour l'appliquer. <b>Tout ce qui a été fait depuis la sauvegarde sera perdu</b> ; l'ancienne base est gardée à part.</p>
+      <div class="row">
+        <input type="file" id="bkFile" accept=".tar,.db" aria-label="Fichier de sauvegarde">
+        <input class="field" id="bkConfirm" placeholder="Tapez RESTAURER pour confirmer" aria-label="Confirmation" autocomplete="off">
+        <button class="btn danger" type="button" id="bkRestore">Restaurer</button>
+      </div>
+    </section>
+
     <section id="s-log" hidden>
       <h1>Journal</h1><p class="sub">Les 100 dernières actions d'administration.</p>
       <div class="tablebox"><table><thead><tr><th>Date</th><th>Administrateur</th><th>Action</th><th>Cible</th></tr></thead><tbody id="lbody"></tbody></table></div>
@@ -180,7 +208,7 @@ td.act { white-space: nowrap; text-align: right; } td.act .btn + .btn { margin-l
   function show(t) {
     current = t;
     document.querySelectorAll("nav.tabs button").forEach(function (b) { b.setAttribute("aria-selected", b.dataset.t === t); });
-    ["home", "reports", "users", "servers", "messages", "log"].forEach(function (k) { $("s-" + k).hidden = k !== t; });
+    ["home", "reports", "users", "servers", "messages", "backup", "log"].forEach(function (k) { $("s-" + k).hidden = k !== t; });
     load[t]();
   }
   document.querySelectorAll("nav.tabs button").forEach(function (b) { b.onclick = function () { show(b.dataset.t); }; });
@@ -191,7 +219,45 @@ td.act { white-space: nowrap; text-align: right; } td.act .btn + .btn { margin-l
 
   function setCount(n) { var c = $("repCount"); c.textContent = String(n); c.hidden = !n; }
 
+  function size(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + " Mo" : Math.max(1, Math.round(n / 1024)) + " Ko"; }
+  function download(path, fallback) {
+    flash("Préparation du fichier…");
+    return fetch("/api/admin" + path, { headers: { "Authorization": "Bearer " + token } }).then(function (r) {
+      if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || "Erreur."); });
+      var m = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || ""); return r.blob().then(function (b) { return [b, m ? m[1] : fallback]; });
+    }).then(function (x) { var a = document.createElement("a"); a.href = URL.createObjectURL(x[0]); a.download = x[1]; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000); flash("Fichier téléchargé : " + x[1]); }).catch(fail);
+  }
+  function waitRestart() {
+    flash("Restauration en cours : le serveur redémarre…"); var tries = 0;
+    var t = setInterval(function () { tries++; fetch("/api/config").then(function (r) { if (r.ok && tries > 2) { clearInterval(t); flash("Restauration terminée."); location.reload(); } }).catch(function () {}); if (tries > 90) { clearInterval(t); flash("Le serveur ne répond pas : relancez-le si nécessaire (npm start).", true); } }, 2000);
+  }
+  function restoreWith(url, body, label) {
+    if ($("bkConfirm").value.trim() !== "RESTAURER") return flash("Tapez RESTAURER dans le champ de confirmation.", true);
+    flash("Envoi et vérification de " + label + "…");
+    fetch("/api/admin" + url, { method: "POST", headers: { "Authorization": "Bearer " + token, "X-Confirm": "RESTAURER", "Content-Type": "application/octet-stream" }, body: body })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) throw new Error(d.error || "Restauration refusée."); return d; }); })
+      .then(waitRestart).catch(fail);
+  }
+  $("bkFull").onclick = function () { download("/backup/full", "cordial-sauvegarde.tar"); };
+  $("bkDb").onclick = function () { download("/backup/db", "cordial-base.db"); };
+  $("bkSnap").onclick = function () { api("POST", "/backup/create").then(function () { flash("Instantané créé."); load.backup(); }).catch(fail); };
+  $("bkRestore").onclick = function () { var f = $("bkFile").files[0]; if (!f) return flash("Choisissez d'abord un fichier .tar ou .db.", true); restoreWith("/backup/restore", f, f.name); };
+
   var load = {
+    backup: function () {
+      api("GET", "/backup/info").then(function (i) {
+        var w = $("bkWarn"); w.hidden = !i.ephemeral;
+        if (i.ephemeral) w.textContent = "Attention : ce serveur Render semble utiliser un disque temporaire. Tout est effacé à chaque redémarrage ou nouveau déploiement. Téléchargez une sauvegarde complète régulièrement, ou ajoutez un disque persistant (voir le README).";
+        var box = $("bkStats"); box.innerHTML = "";
+        [["Taille de la base", size(i.db)], ["Fichiers envoyés", i.uploads.count + " (" + size(i.uploads.size) + ")"], ["Instantanés", String(i.backups.length)]].forEach(function (x) { var c = el("div", "stat"); c.appendChild(el("b", "", x[1])); c.appendChild(el("span", "", x[0])); box.appendChild(c); });
+        var body = $("bkList"); body.innerHTML = ""; if (!i.backups.length) empty(body, "Aucun instantané pour le moment.", true);
+        i.backups.forEach(function (b) {
+          var tr = el("tr"); cell(tr, b.name); cell(tr, date(b.ts)); cell(tr, size(b.size), "num");
+          var a = el("div", "pact"); a.appendChild(btn("Télécharger", "", function () { download("/backup/file/" + encodeURIComponent(b.name), b.name); }));
+          a.appendChild(btn("Restaurer", "danger", function () { restoreWith("/backup/restore/" + encodeURIComponent(b.name), null, b.name); })); cell(tr, a); body.appendChild(tr);
+        });
+      }).catch(fail);
+    },
     home: function () {
       api("GET", "/stats").then(function (s) {
         var items = [["Utilisateurs", s.users], ["En ligne", s.online], ["Messages (24 h)", s.messages24h], ["Messages au total", s.messages], ["Serveurs", s.servers], ["Salons", s.channels], ["Comptes suspendus", s.banned], ["Signalements ouverts", s.reportsOpen]];

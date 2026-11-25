@@ -25,6 +25,11 @@ let ICE = [{ urls: "stun:stun.l.google.com:19302" }];
 try { if (process.env.ICE_SERVERS) ICE = JSON.parse(process.env.ICE_SERVERS); } catch (e) { console.error("ICE_SERVERS invalide, STUN public utilisé."); }
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const backup = require("./backup");
+const BACKUP_DIR = process.env.BACKUP_DIR || (process.env.DB_PATH ? DB_PATH + "-backups" : path.join(__dirname, "backups"));
+const BACKUP_MAX = (Number(process.env.BACKUP_MAX_MB) || 1024) * 1048576;
+// Une restauration demandée depuis le panneau admin est appliquée ici, avant l'ouverture de la base
+if (backup.applyPendingRestore(DB_PATH, UPLOAD_DIR)) console.log("Sauvegarde restaurée (l'ancienne base est conservée dans « " + path.basename(DB_PATH) + ".before-restore »).");
 
 /* ---------- Base de données ---------- */
 const db = new DatabaseSync(DB_PATH);
@@ -57,6 +62,10 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     PRIMARY KEY (user_id, role_id)
+  );
+  CREATE TABLE IF NOT EXISTS notif_mutes (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, target_id INTEGER NOT NULL, until INTEGER,
+    PRIMARY KEY (user_id, kind, target_id)
   );
   CREATE TABLE IF NOT EXISTS channel_roles (
     channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
@@ -124,14 +133,14 @@ for (const sql of [
   "ALTER TABLE channels ADD COLUMN readonly INTEGER NOT NULL DEFAULT 0", "ALTER TABLE messages ADD COLUMN edited INTEGER",
   "ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", "ALTER TABLE messages ADD COLUMN poll TEXT",
   "ALTER TABLE messages ADD COLUMN reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL",
-  "ALTER TABLE servers ADD COLUMN partner INTEGER NOT NULL DEFAULT 0", "ALTER TABLE servers ADD COLUMN partner_logo TEXT", "ALTER TABLE servers ADD COLUMN icon TEXT", "ALTER TABLE servers ADD COLUMN banner TEXT", "ALTER TABLE users ADD COLUMN avatar TEXT", "ALTER TABLE users ADD COLUMN banner TEXT",
+  "ALTER TABLE servers ADD COLUMN partner INTEGER NOT NULL DEFAULT 0", "ALTER TABLE servers ADD COLUMN partner_logo TEXT", "ALTER TABLE messages ADD COLUMN mall INTEGER NOT NULL DEFAULT 0", "ALTER TABLE servers ADD COLUMN icon TEXT", "ALTER TABLE servers ADD COLUMN banner TEXT", "ALTER TABLE users ADD COLUMN avatar TEXT", "ALTER TABLE users ADD COLUMN banner TEXT",
   "ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''", "ALTER TABLE users ADD COLUMN custom TEXT NOT NULL DEFAULT ''",
   "ALTER TABLE files ADD COLUMN purpose TEXT",
   "ALTER TABLE channels ADD COLUMN private INTEGER NOT NULL DEFAULT 0",
 ]) { try { db.exec(sql); } catch (e) { /* colonne déjà présente */ } }
 db.prepare("UPDATE users SET role = 'admin' WHERE lower(name) IN (" + ADMIN_NAMES.map(() => "?").join(",") + ")").run(...ADMIN_NAMES);
 
-const MSG_SELECT = `SELECT m.id, m.channel_id, m.text, m.ts, m.edited, m.pinned, m.poll, m.reply_to,
+const MSG_SELECT = `SELECT m.id, m.channel_id, m.text, m.ts, m.edited, m.pinned, m.poll, m.reply_to, m.mall,
     u.id AS uid, u.name, u.color, u.role, u.avatar, u.custom, r.text AS r_text, ru.name AS r_name, ru.color AS r_color,
     f.id AS f_id, f.name AS f_name, f.mime AS f_mime, f.size AS f_size,
     (SELECT server_id FROM channels WHERE id = m.channel_id) AS sid
@@ -154,6 +163,11 @@ const q = {
   insServer: db.prepare("INSERT INTO servers (name, abbr, code, owner_id) VALUES (?, ?, ?, ?)"),
   join: db.prepare("INSERT OR IGNORE INTO members (server_id, user_id) VALUES (?, ?)"),
   isMember: db.prepare("SELECT 1 AS ok FROM members WHERE server_id = ? AND user_id = ?"),
+  nmActive: db.prepare("SELECT 1 FROM notif_mutes WHERE user_id = ? AND kind = ? AND target_id = ? AND (until IS NULL OR until > ?)"),
+  nmList: db.prepare("SELECT kind, target_id AS id, until FROM notif_mutes WHERE user_id = ? AND (until IS NULL OR until > ?)"),
+  nmSet: db.prepare("INSERT OR REPLACE INTO notif_mutes (user_id, kind, target_id, until) VALUES (?, ?, ?, ?)"),
+  nmDel: db.prepare("DELETE FROM notif_mutes WHERE user_id = ? AND kind = ? AND target_id = ?"),
+  roleMembers: db.prepare("SELECT user_id FROM member_roles WHERE role_id = ?"),
   chRoles: db.prepare("SELECT role_id FROM channel_roles WHERE channel_id = ?"),
   canSeeByRole: db.prepare("SELECT 1 FROM channel_roles cr JOIN member_roles mr ON mr.role_id = cr.role_id WHERE cr.channel_id = ? AND mr.user_id = ? LIMIT 1"),
   getBan: db.prepare("SELECT * FROM bans WHERE server_id = ? AND user_id = ?"),
@@ -177,7 +191,7 @@ const q = {
   search: db.prepare(MSG_SELECT + " WHERE m.channel_id = ? AND m.text LIKE ? ESCAPE '\\' ORDER BY m.id DESC LIMIT 50"),
   pins: db.prepare(MSG_SELECT + " WHERE m.channel_id = ? AND m.pinned = 1 ORDER BY m.id DESC LIMIT 50"),
   message: db.prepare(MSG_SELECT + " WHERE m.id = ?"),
-  insMessage: db.prepare("INSERT INTO messages (channel_id, user_id, text, ts, reply_to, poll) VALUES (?, ?, ?, ?, ?, ?)"),
+  insMessage: db.prepare("INSERT INTO messages (channel_id, user_id, text, ts, reply_to, poll, mall) VALUES (?, ?, ?, ?, ?, ?, ?)"),
   delMessage: db.prepare("DELETE FROM messages WHERE id = ?"),
   setText: db.prepare("UPDATE messages SET text = ?, edited = ? WHERE id = ?"),
   setPinned: db.prepare("UPDATE messages SET pinned = ? WHERE id = ?"),
@@ -568,7 +582,7 @@ function msgView(m) {
   const rx = {};
   q.reactionsFor.all(m.id).forEach((r) => (rx[r.emoji] ||= []).push(r.name));
   const v = {
-    id: m.id, channelId: m.channel_id, text: m.text, ts: m.ts, edited: m.edited || null, pinned: !!m.pinned,
+    id: m.id, channelId: m.channel_id, text: m.text, ts: m.ts, edited: m.edited || null, pinned: !!m.pinned, mentionAll: !!m.mall,
     user: { id: m.uid, name: m.name, color: m.color, role: m.role, avatar: m.avatar || null, roleColor: roleColorOf(m.sid, m.uid) }, reactions: rx, reply: null, file: null, poll: null,
   };
   if (m.poll) {
@@ -598,7 +612,7 @@ function roomsOf(c) {
   return ["srv:" + c.server_id];
 }
 /* ---------- Rôles et permissions par serveur ---------- */
-const P = { MESSAGES: 1, CHANNELS: 2, ROLES: 4, KICK: 8, VIP: 16, BAN: 32, MUTE: 64 }, P_ALL = 127, TOP_RANK = 1e9, MOD = P.KICK | P.BAN | P.MUTE;
+const P = { MESSAGES: 1, CHANNELS: 2, ROLES: 4, KICK: 8, VIP: 16, BAN: 32, MUTE: 64, EVERYONE: 128 }, P_ALL = 255, TOP_RANK = 1e9, MOD = P.KICK | P.BAN | P.MUTE;
 const isOwnerOf = (user, sid) => { const sv = q.serverById.get(sid); return !!sv && sv.owner_id === user.id; };
 // Propriétaire, modérateur du site ou administrateur : tous les droits. Sinon, cumul des droits des rôles reçus.
 function permsOf(user, sid) {
@@ -646,8 +660,8 @@ io.use((socket, next) => {
 });
 
 function emitMessage(c, m) { io.to(roomsOf(c)).emit("message", msgView(m)); }
-function insertMessage(c, userId, text, replyTo, poll) {
-  const id = Number(q.insMessage.run(c.id, userId, text, Date.now(), replyTo || null, poll ? JSON.stringify(poll) : null).lastInsertRowid);
+function insertMessage(c, userId, text, replyTo, poll, mall) {
+  const id = Number(q.insMessage.run(c.id, userId, text, Date.now(), replyTo || null, poll ? JSON.stringify(poll) : null, mall ? 1 : 0).lastInsertRowid);
   return q.message.get(id);
 }
 function postBot(c, text, poll) { emitMessage(c, insertMessage(c, BOT.id, text, null, poll)); }
@@ -661,19 +675,32 @@ const HELP = [
   "/sondage Question | Option 1 | Option 2 : crée un sondage (9 options maximum)",
 ].join("\n");
 
-function mentionedIds(text, serverId) {
-  const ids = new Set();
-  (text.match(/@[\p{L}\p{N}_-]{2,20}/gu) || []).slice(0, 8).forEach((tag) => {
-    const u = q.userByName.get(tag.slice(1));
+// « @Équipe Vip » s'écrit @Équipe-Vip : on compare sans casse, espaces remplacés par des tirets
+const roleKey = (name) => String(name).toLowerCase().replace(/\s+/g, "-");
+const EVERYONE_RE = /(^|[^\p{L}\p{N}_-])@(everyone|tous)(?![\p{L}\p{N}_-])/iu;
+const hasEveryone = (text) => EVERYONE_RE.test(text);
+function mentionedIds(text, serverId, sender) {
+  const ids = new Set(), tags = (text.match(/(?<![\p{L}\p{N}_.-])@[\p{L}\p{N}_-]{2,24}/gu) || []).slice(0, 8);
+  let roles = null;
+  tags.forEach((tag) => {
+    const name = tag.slice(1), u = q.userByName.get(name);
     if (u && q.isMember.get(serverId, u.id)) ids.add(u.id);
+    roles ||= q.rolesOf.all(serverId);
+    roles.filter((r) => roleKey(r.name) === name.toLowerCase()).forEach((r) => q.roleMembers.all(r.id).forEach((x) => ids.add(x.user_id)));
   });
+  if (sender && hasEveryone(text) && can(sender, serverId, P.EVERYONE)) q.membersOf.all(serverId).forEach((m) => ids.add(m.id));
   return ids;
 }
+function notifMuted(userId, c) {
+  const now = Date.now();
+  return !!q.nmActive.get(userId, "channel", c.id, now) || (c.kind !== "dm" && !!q.nmActive.get(userId, "server", c.server_id, now));
+}
+const notifMutesOf = (userId) => q.nmList.all(userId, Date.now()).map((r) => ({ kind: r.kind, id: r.id, until: r.until }));
 function pushForMessage(c, user, m, text) {
   const who = new Set();
   if (c.kind === "dm") q.dmUsers.all(c.id).forEach((r) => who.add(r.user_id));
   else {
-    mentionedIds(text, c.server_id).forEach((id) => who.add(id));
+    mentionedIds(text, c.server_id, user).forEach((id) => who.add(id));
     if (m.reply_to) { const t = q.message.get(m.reply_to); if (t) who.add(t.uid); }
   }
   who.delete(user.id);
@@ -681,6 +708,9 @@ function pushForMessage(c, user, m, text) {
   who.forEach((id) => {
     const target = q.userById.get(id);
     if (!target || target.banned || target.role === "bot" || (c.private && !canSee(target, c))) return;
+    // « Ne pas déranger » coupe tout ; un salon ou un serveur en sourdine ne notifie que pour une mention directe
+    if (target.status === "dnd") return;
+    if (notifMuted(id, c) && !text.toLowerCase().includes("@" + target.name.toLowerCase())) return;
     // Pas de notification si la personne regarde déjà l'application
     if (isOnline(id) && [...online.get(id).values()].some((s) => s.visible)) return;
     sendPush(id, { title: c.kind === "dm" ? user.name : user.name + " · #" + c.name, body, tag: "ch" + c.id, url: "/app" });
@@ -698,7 +728,7 @@ io.on("connection", (socket) => {
   const servers = q.serversOf.all(uid);
   servers.forEach((s) => socket.join("srv:" + s.id));
   const dms = q.dmsOf.all(uid).map((d) => ({ id: d.id, other: { id: d.oid, name: d.name, color: d.color, role: d.role, avatar: d.avatar || null, custom: d.custom || "", status: shownStatus(d.oid ? { ...d, id: d.oid } : d) } }));
-  socket.emit("ready", { me: { ...pub(user), status: user.status }, servers: servers.map((s) => serverView(s, user)), dms, ice: ICE });
+  socket.emit("ready", { me: { ...pub(user), status: user.status }, servers: servers.map((s) => serverView(s, user)), dms, ice: ICE, notifMutes: notifMutesOf(uid) });
   broadcastPresence(user);
 
   let stamps = [], voiceChan = null;
@@ -795,7 +825,7 @@ io.on("connection", (socket) => {
       if (!reply || reply.channel_id !== c.id) return ack({ error: "Le message cité n'existe plus." });
     }
     stamps.push(now); lastSent.set(uid + ":" + c.id, now);
-    const m = tx(() => { const row = insertMessage(c, uid, body, reply && reply.id, null); if (file) q.attachFile.run(row.id, file.id); return q.message.get(row.id); });
+    const m = tx(() => { const row = insertMessage(c, uid, body, reply && reply.id, null, c.kind !== "dm" && hasEveryone(body) && can(user, c.server_id, P.EVERYONE)); if (file) q.attachFile.run(row.id, file.id); return q.message.get(row.id); });
     emitMessage(c, m);
     pushForMessage(c, user, m, body);
     ack({ ok: true });
@@ -907,6 +937,22 @@ io.on("connection", (socket) => {
   }));
 
   /* --- Serveurs et salons --- */
+  // Sourdine des notifications d'un salon ou d'un serveur, pour soi seulement : minutes = durée, null = jusqu'à réactivation, off = réactiver
+  socket.on("notifMute", guard(({ kind, id, minutes, off }, ack) => {
+    id = Number(id);
+    if (kind === "server") { const s = q.serverById.get(id); if (!s || s.id === DM_SERVER || !q.isMember.get(s.id, uid)) return ack({ error: "Serveur introuvable." }); }
+    else if (kind === "channel") { if (!canAccess(uid, id)) return ack({ error: "Salon introuvable." }); }
+    else return ack({ error: "Cible invalide." });
+    if (off) q.nmDel.run(uid, kind, id);
+    else {
+      const m = minutes === null || minutes === undefined ? null : Math.floor(Number(minutes));
+      if (m !== null && !(m >= 1 && m <= 60 * 24 * 365)) return ack({ error: "Durée invalide." });
+      q.nmSet.run(uid, kind, id, m === null ? null : Date.now() + m * 60e3);
+    }
+    db.prepare("DELETE FROM notif_mutes WHERE user_id = ? AND until IS NOT NULL AND until <= ?").run(uid, Date.now());
+    io.to("user:" + uid).emit("notifMutes", notifMutesOf(uid)); ack({ ok: true });
+  }));
+
   /* Quitter, transférer, supprimer */
   socket.on("leaveServer", guard(({ serverId }, ack) => {
     const s = q.serverById.get(serverId);
@@ -1348,6 +1394,76 @@ admin.get("/servers", requireAdmin, (req, res) => res.json(db.prepare(`SELECT s.
     (SELECT COUNT(*) FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.server_id = s.id) AS messages
   FROM servers s LEFT JOIN users o ON o.id = s.owner_id WHERE s.name != '__dm__' ORDER BY s.id`).all().map((s) => ({ ...s, isDefault: s.id === DEFAULT_SERVER }))));
 
+/* ---------- Sauvegardes : réservé à l'administrateur ---------- */
+let backupBusy = false;
+const dirSize = (dir, re) => { let count = 0, size = 0; try { fs.readdirSync(dir).forEach((n) => { if (!re || re.test(n)) { count++; size += fs.statSync(path.join(dir, n)).size; } }); } catch (e) { /* dossier absent */ } return { count, size }; };
+const fileSize = (f) => { try { return fs.statSync(f).size; } catch (e) { return 0; } };
+admin.get("/backup/info", requireAdmin, (req, res) => {
+  res.json({
+    db: fileSize(DB_PATH), uploads: dirSize(UPLOAD_DIR, /^[0-9a-f]{32}$/), backups: backup.listSnapshots(BACKUP_DIR), maxMb: BACKUP_MAX / 1048576,
+    // Sur Render (offre gratuite) le disque est effacé à chaque redémarrage, sauf s'il est monté sur /var/data
+    ephemeral: !!process.env.RENDER && !DB_PATH.startsWith("/var/data"), beforeRestore: fs.existsSync(DB_PATH + ".before-restore"),
+  });
+});
+const sendDownload = (res, name, type) => { res.setHeader("Content-Type", type); res.setHeader("Content-Disposition", 'attachment; filename="' + name + '"'); res.setHeader("Cache-Control", "no-store"); };
+admin.get("/backup/full", requireAdmin, async (req, res) => {
+  if (backupBusy) return res.status(409).json({ error: "Une opération de sauvegarde est déjà en cours." });
+  backupBusy = true; const tmp = path.join(BACKUP_DIR, ".export-" + process.pid + ".db");
+  try {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true }); fs.rmSync(tmp, { force: true });
+    const entries = backup.archiveEntries(db, UPLOAD_DIR, tmp);
+    sendDownload(res, "cordial-sauvegarde-" + backup.stamp() + ".tar", "application/x-tar");
+    await backup.writeTar(entries, res); res.end(); audit(req, "Sauvegarde complète téléchargée", entries.length - 1 + " fichier(s)");
+  } catch (e) { console.error("Sauvegarde :", e.message); if (!res.headersSent) res.status(500).json({ error: "Sauvegarde impossible : " + e.message }); else res.destroy(); }
+  finally { fs.rmSync(tmp, { force: true }); backupBusy = false; }
+});
+admin.get("/backup/db", requireAdmin, (req, res) => {
+  const tmp = path.join(BACKUP_DIR, ".export-" + process.pid + "-db.db");
+  try {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true }); fs.rmSync(tmp, { force: true }); backup.snapshot(db, tmp);
+    sendDownload(res, "cordial-base-" + backup.stamp() + ".db", "application/octet-stream");
+    res.sendFile(tmp, { dotfiles: "allow" }, (err) => { fs.rmSync(tmp, { force: true }); if (err && !res.headersSent) res.status(500).end(); });
+    audit(req, "Base téléchargée", "base seule");
+  } catch (e) { fs.rmSync(tmp, { force: true }); res.status(500).json({ error: "Sauvegarde impossible : " + e.message }); }
+});
+admin.post("/backup/create", requireAdmin, (req, res) => {
+  try { const name = backup.takeSnapshot(db, BACKUP_DIR, "manuel"); audit(req, "Instantané de la base créé", name); res.json({ ok: true, name }); }
+  catch (e) { res.status(500).json({ error: "Instantané impossible : " + e.message }); }
+});
+admin.get("/backup/file/:name", requireAdmin, (req, res) => {
+  if (!backup.SNAP_RE.test(req.params.name)) return res.status(404).json({ error: "Instantané introuvable." });
+  const f = path.join(BACKUP_DIR, req.params.name); if (!fs.existsSync(f)) return res.status(404).json({ error: "Instantané introuvable." });
+  sendDownload(res, req.params.name, "application/octet-stream"); res.sendFile(f);
+});
+// La restauration est préparée et vérifiée ici, puis appliquée au redémarrage du serveur (la base ouverte n'est jamais remplacée à chaud)
+function finishRestore(req, res, what, info) {
+  audit(req, "Restauration préparée", what);
+  res.json({ ok: true, restart: true, uploads: info.uploads });
+  res.on("finish", () => setTimeout(() => { try { db.close(); } catch (e) { /* déjà fermée */ } console.log("Redémarrage pour restaurer une sauvegarde."); process.exit(0); }, 500));
+}
+const confirmed = (req) => req.get("X-Confirm") === "RESTAURER";
+admin.post("/backup/restore", requireAdmin, (req, res) => {
+  if (!confirmed(req)) return res.status(400).json({ error: "Confirmation manquante." });
+  if (backupBusy) return res.status(409).json({ error: "Une opération de sauvegarde est déjà en cours." });
+  backupBusy = true; fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const tmp = path.join(BACKUP_DIR, ".upload-" + process.pid), out = fs.createWriteStream(tmp); let size = 0, aborted = false;
+  const done = (fn) => { backupBusy = false; out.destroy(); fs.rmSync(tmp, { force: true }); fn && fn(); };
+  req.on("data", (c) => { size += c.length; if (size > BACKUP_MAX && !aborted) { aborted = true; req.unpipe(out); done(() => res.status(413).json({ error: "Fichier trop gros (" + BACKUP_MAX / 1048576 + " Mo maximum)." })); } });
+  req.on("error", () => done());
+  req.pipe(out);
+  out.on("finish", () => {
+    if (aborted) return;
+    try { const info = backup.stageRestore(tmp, DB_PATH, {}); done(); finishRestore(req, res, "fichier envoyé", info); }
+    catch (e) { done(() => res.status(400).json({ error: e.message })); }
+  });
+});
+admin.post("/backup/restore/:name", requireAdmin, (req, res) => {
+  if (!confirmed(req)) return res.status(400).json({ error: "Confirmation manquante." });
+  if (!backup.SNAP_RE.test(req.params.name) || !fs.existsSync(path.join(BACKUP_DIR, req.params.name))) return res.status(404).json({ error: "Instantané introuvable." });
+  try { const info = backup.stageRestore(path.join(BACKUP_DIR, req.params.name), DB_PATH, {}); finishRestore(req, res, req.params.name, info); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 /* Serveurs partenaires : badge « Partenaire » et logo affiché devant le nom, pour tous les membres */
 const partnerPublic = (s) => ({ serverId: s.id, owner: s.owner_id, name: s.name, abbr: s.abbr, icon: s.icon, banner: s.banner, partner: !!s.partner, logo: s.partner ? s.partner_logo : null });
 const partnerTarget = (req, res) => {
@@ -1437,6 +1553,7 @@ app.use((err, req, res, next) => {
   console.error(err); res.status(500).json({ error: "Erreur serveur." });
 });
 
+backup.startAutoBackups(db, BACKUP_DIR);
 server.listen(PORT, () => {
   console.log("Cordial démarré sur http://localhost:" + PORT);
   const found = db.prepare("SELECT name FROM users WHERE role = 'admin'").all().map((r) => r.name);
