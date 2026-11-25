@@ -133,7 +133,7 @@ for (const sql of [
   "ALTER TABLE channels ADD COLUMN readonly INTEGER NOT NULL DEFAULT 0", "ALTER TABLE messages ADD COLUMN edited INTEGER",
   "ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", "ALTER TABLE messages ADD COLUMN poll TEXT",
   "ALTER TABLE messages ADD COLUMN reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL",
-  "ALTER TABLE servers ADD COLUMN partner INTEGER NOT NULL DEFAULT 0", "ALTER TABLE servers ADD COLUMN partner_logo TEXT", "ALTER TABLE messages ADD COLUMN mall INTEGER NOT NULL DEFAULT 0", "ALTER TABLE servers ADD COLUMN icon TEXT", "ALTER TABLE servers ADD COLUMN banner TEXT", "ALTER TABLE users ADD COLUMN avatar TEXT", "ALTER TABLE users ADD COLUMN banner TEXT",
+  "ALTER TABLE servers ADD COLUMN partner INTEGER NOT NULL DEFAULT 0", "ALTER TABLE servers ADD COLUMN partner_logo TEXT", "ALTER TABLE messages ADD COLUMN mall INTEGER NOT NULL DEFAULT 0", "ALTER TABLE roles ADD COLUMN hoist INTEGER NOT NULL DEFAULT 0", "ALTER TABLE servers ADD COLUMN icon TEXT", "ALTER TABLE servers ADD COLUMN banner TEXT", "ALTER TABLE users ADD COLUMN avatar TEXT", "ALTER TABLE users ADD COLUMN banner TEXT",
   "ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''", "ALTER TABLE users ADD COLUMN custom TEXT NOT NULL DEFAULT ''",
   "ALTER TABLE files ADD COLUMN purpose TEXT",
   "ALTER TABLE channels ADD COLUMN private INTEGER NOT NULL DEFAULT 0",
@@ -1038,7 +1038,7 @@ io.on("connection", (socket) => {
   }));
 
   /* --- Rôles --- */
-  const roleView = (r) => ({ id: r.id, name: r.name, color: r.color, position: r.position, perms: r.perms, count: r.count || 0 });
+  const roleView = (r) => ({ id: r.id, name: r.name, color: r.color, position: r.position, perms: r.perms, hoist: !!r.hoist, count: r.count || 0 });
   const rolesChanged = (sid) => { io.to("srv:" + sid).emit("rolesChanged", { serverId: sid }); io.to("srv:" + sid).emit("channelsChanged", { serverId: sid }); }; // les clients rechargent aussi leurs salons : un rôle peut ouvrir ou fermer un salon privé
   const COLOR = /^#[0-9a-fA-F]{6}$/;
   // Contrôle commun : droit de gérer les rôles, et le rôle visé doit être plus bas que le sien
@@ -1055,7 +1055,7 @@ io.on("connection", (socket) => {
     const mu = activeMute(serverId, uid);
     ack({ roles: q.rolesOf.all(serverId).map(roleView), perms: permsOf(user, serverId), rank: rankOf(user, serverId), mod: canMod(user, serverId), mutedUntil: mu ? mu.until : null });
   }));
-  socket.on("createRole", guard(({ serverId, name, color, perms }, ack) => {
+  socket.on("createRole", guard(({ serverId, name, color, perms, hoist }, ack) => {
     user = cur();
     const s = q.serverById.get(serverId);
     if (!s || s.id === DM_SERVER || !q.isMember.get(serverId, uid) || !can(user, serverId, P.ROLES)) return ack({ error: "Vous n'avez pas la permission de créer un rôle." });
@@ -1065,17 +1065,17 @@ io.on("connection", (socket) => {
     // Un nouveau rôle se place tout en bas de la hiérarchie (les autres montent d'un cran), donc toujours sous son créateur
     const id = tx(() => {
       db.prepare("UPDATE roles SET position = position + 1 WHERE server_id = ?").run(serverId);
-      return Number(db.prepare("INSERT INTO roles (server_id, name, color, position, perms) VALUES (?, ?, ?, 1, ?)").run(serverId, n, COLOR.test(color) ? color : "#99aab5", (Number(perms) || 0) & P_ALL & mine).lastInsertRowid);
+      return Number(db.prepare("INSERT INTO roles (server_id, name, color, position, perms, hoist) VALUES (?, ?, ?, 1, ?, ?)").run(serverId, n, COLOR.test(color) ? color : "#99aab5", (Number(perms) || 0) & P_ALL & mine, hoist ? 1 : 0).lastInsertRowid);
     });
     rolesChanged(serverId); ack({ ok: true, id });
   }));
-  socket.on("updateRole", guard(({ roleId, name, color, perms }, ack) => {
+  socket.on("updateRole", guard(({ roleId, name, color, perms, hoist }, ack) => {
     const r = manageable(roleId, ack); if (!r) return;
     const n = name === undefined ? r.name : clean(name, 24); if (!n) return ack({ error: "Donnez un nom au rôle." });
     const mine = permsOf(user, r.server_id);
     // On ne peut pas donner un droit qu'on n'a pas soi-même, ni retirer celui qu'on n'a pas
     const wanted = perms === undefined ? r.perms : (Number(perms) || 0) & P_ALL, keep = r.perms & ~mine;
-    db.prepare("UPDATE roles SET name = ?, color = ?, perms = ? WHERE id = ?").run(n, COLOR.test(color) ? color : r.color, (wanted & mine) | keep, r.id);
+    db.prepare("UPDATE roles SET name = ?, color = ?, perms = ?, hoist = ? WHERE id = ?").run(n, COLOR.test(color) ? color : r.color, (wanted & mine) | keep, hoist === undefined ? r.hoist : hoist ? 1 : 0, r.id);
     rolesChanged(r.server_id); ack({ ok: true });
   }));
   socket.on("moveRole", guard(({ roleId, dir }, ack) => {

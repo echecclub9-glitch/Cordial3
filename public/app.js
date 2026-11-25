@@ -335,8 +335,12 @@
   function renderMembers() {
     const m = $("mem"); m.innerHTML = ""; const list = S.members[S.sid] || [];
     const on = list.filter((x) => x.status !== "off"), off = list.filter((x) => x.status === "off");
-    function group(t, l) {
-      if (!l.length) return; m.appendChild(el("div", "cat", t + " — " + l.length));
+    // Rôles « affichés » : les membres en ligne sont regroupés sous le rôle affiché le plus haut qu'ils possèdent
+    const hoisted = (((S.roles[S.sid] || {}).roles) || []).filter((r) => r.hoist).sort((a, b) => b.position - a.position);
+    const rest = []; const byRole = new Map(hoisted.map((r) => [r.id, []]));
+    on.forEach((u) => { const r = hoisted.find((x) => (u.roles || []).includes(x.id)); if (r) byRole.get(r.id).push(u); else rest.push(u); });
+    function group(t, l, color) {
+      if (!l.length) return; const h = el("div", "cat", t + " — " + l.length); if (color) h.style.color = color; m.appendChild(h);
       l.forEach((u) => {
         const r = el("button", "mb" + (u.status === "off" ? " off" : "")); r.appendChild(avatar(u, u.status));
         const w = el("span", "nmw"), nmEl = el("span", "nm", u.name); if (u.roleColor) nmEl.style.color = u.roleColor; w.appendChild(nmEl); const cs = live(u).custom; if (cs) { const c = el("span", "cs", cs); c.title = cs; w.appendChild(c); } r.appendChild(w);
@@ -345,7 +349,8 @@
         r.onclick = (e) => userMenu(e, u); m.appendChild(r);
       });
     }
-    group("En ligne", on); group("Hors ligne", off);
+    hoisted.forEach((r) => group(r.name, byRole.get(r.id), r.color));
+    group("En ligne", rest); group("Hors ligne", off);
   }
   $("bMute").onclick = () => { const c = channel(); if (c) notifMuteModal("channel", c.id, (c.kind === "dm" ? "@ " : "#") + c.name); };
   function renderMuteBtn() {
@@ -929,6 +934,8 @@
         SWATCH.forEach((c) => { const b = el("button", "sw"); b.type = "button"; b.dataset.c = c; b.style.background = c; b.disabled = locked; b.setAttribute("aria-label", c); b.onclick = () => { col = c; pick.value = c; mark(); }; sw.appendChild(b); });
         pick.oninput = () => { col = pick.value; mark(); }; sw.appendChild(pick);
         ed.append(l1, i1, l2, sw);
+        const hl = el("label", "check perm"), hcb = el("input"); hcb.type = "checkbox"; hcb.checked = !!r.hoist; hcb.disabled = locked;
+        { const tx = el("span"); tx.append(el("b", "", "Afficher ce rôle dans la liste des membres"), el("small", "", "Ses membres en ligne sont regroupés sous le nom du rôle, au-dessus des autres")); hl.append(hcb, tx); ed.appendChild(hl); }
         const l3 = el("label", "", "Permissions"); ed.appendChild(l3);
         const checks = PERM_LABELS.map(([flag, name, desc]) => {
           const lab = el("label", "check perm"), cb = el("input"); cb.type = "checkbox"; cb.checked = (r.perms & flag) !== 0;
@@ -940,7 +947,7 @@
         if (locked) ed.appendChild(el("p", "rhint", "Ce rôle est au même niveau que le vôtre ou au-dessus : lecture seule."));
         else {
           const save = el("button", "btn", "Enregistrer le rôle"); save.type = "button";
-          save.onclick = () => S.sock.emit("updateRole", { roleId: r.id, name: i1.value, color: col, perms: checks.reduce((n, [f, c]) => n | (c.checked ? f : 0), 0) }, (x) => { if (x && x.error) err.textContent = x.error; else toast("Rôle enregistré."); });
+          save.onclick = () => S.sock.emit("updateRole", { roleId: r.id, name: i1.value, color: col, hoist: hcb.checked, perms: checks.reduce((n, [f, c]) => n | (c.checked ? f : 0), 0) }, (x) => { if (x && x.error) err.textContent = x.error; else toast("Rôle enregistré."); });
           const del = el("button", "btn danger", "Supprimer ce rôle"); del.type = "button";
           del.onclick = () => { if (!del.dataset.sure) { del.dataset.sure = 1; del.textContent = "Cliquez encore pour confirmer"; return; } S.sock.emit("deleteRole", { roleId: r.id }, (x) => { if (x && x.error) err.textContent = x.error; else sel = null; }); };
           ed.append(save, del);
