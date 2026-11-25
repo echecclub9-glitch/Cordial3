@@ -316,3 +316,9 @@ label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .04em
 .ch.muted, .srv.muted { opacity: .55; } .ch.muted.on { opacity: 1; } .ch.muted .lock svg { vertical-align: -2px; }
 #bMute.active { color: var(--bad); }
 .setsec { margin: 14px 0 0; }
+
+/* Panneau vocal : le texte se tronque, les boutons passent à la ligne au lieu de déborder */
+.vpanel { flex-wrap: wrap; row-gap: 4px; }
+.vinfo { flex: 1 1 150px; }
+.vpanel .vstate { overflow: hidden; text-overflow: ellipsis; }
+.vbtns { margin-left: auto; }
