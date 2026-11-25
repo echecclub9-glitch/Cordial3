@@ -67,6 +67,10 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, target_id INTEGER NOT NULL, until INTEGER,
     PRIMARY KEY (user_id, kind, target_id)
   );
+  CREATE TABLE IF NOT EXISTS categories (
+    server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (server_id, name)
+  );
   CREATE TABLE IF NOT EXISTS channel_roles (
     channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
     role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
@@ -587,9 +591,16 @@ function chView(c, viewer) {
   if (c.kind === "voice") v.voice = rosterOf(c.id);
   return v;
 }
+// Catégories d'un serveur : celles créées explicitement (même vides) + celles des salons existants
+function catsOf(sid) {
+  const out = db.prepare("SELECT name FROM categories WHERE server_id = ? ORDER BY position, rowid").all(sid).map((r) => r.name);
+  q.channelsOf.all(sid).forEach((c) => { if (out.indexOf(c.category) < 0) out.push(c.category); });
+  return out;
+}
+const CAT_MAX = 20;
 const visibleChannels = (sid, user) => q.channelsOf.all(sid).filter((c) => canSee(user, c)).map((c) => chView(c, user));
 function serverView(s, user) {
-  return { id: s.id, name: s.name, abbr: s.abbr, code: s.code, owner: s.owner_id, partner: !!s.partner, logo: s.partner ? s.partner_logo : null, icon: s.icon, banner: s.banner, isDefault: s.id === DEFAULT_SERVER, channels: visibleChannels(s.id, user) };
+  return { id: s.id, name: s.name, abbr: s.abbr, code: s.code, owner: s.owner_id, partner: !!s.partner, logo: s.partner ? s.partner_logo : null, icon: s.icon, banner: s.banner, isDefault: s.id === DEFAULT_SERVER, channels: visibleChannels(s.id, user), categories: catsOf(s.id) };
 }
 function rosterOf(channelId) {
   const room = voiceRooms.get(channelId);
@@ -1213,22 +1224,66 @@ io.on("connection", (socket) => {
   const channelsChanged = (sid) => io.to("srv:" + sid).emit("channelsChanged", { serverId: sid });
   socket.on("channels", guard(({ serverId }, ack) => {
     if (!q.isMember.get(serverId, uid)) return ack({ error: "Accès refusé." });
-    ack({ channels: visibleChannels(serverId, cur()) });
+    ack({ channels: visibleChannels(serverId, cur()), categories: catsOf(serverId) });
   }));
-  socket.on("createChannel", guard(({ serverId, name, topic, kind, private: priv, roleIds }, ack) => {
+  const catAuth = (serverId) => {
+    user = cur();
+    const s = q.serverById.get(serverId);
+    return s && s.id !== DM_SERVER && can(user, s.id, P.CHANNELS) ? s : null;
+  };
+  const catName = (name) => clean(name, 30).replace(/\s+/g, " ");
+  const catFind = (sid, name) => catsOf(sid).find((c) => c.toLowerCase() === name.toLowerCase());
+  socket.on("createCategory", guard(({ serverId, name }, ack) => {
+    const s = catAuth(serverId); if (!s) return ack({ error: "Vous n'avez pas la permission de gérer les catégories." });
+    const n = catName(name); if (!n) return ack({ error: "Donnez un nom à la catégorie." });
+    if (catFind(s.id, n)) return ack({ error: "Cette catégorie existe déjà." });
+    if (catsOf(s.id).length >= CAT_MAX) return ack({ error: "Maximum " + CAT_MAX + " catégories." });
+    const pos = db.prepare("SELECT COALESCE(MAX(position),0)+1 AS p FROM categories WHERE server_id = ?").get(s.id).p;
+    db.prepare("INSERT INTO categories (server_id, name, position) VALUES (?,?,?)").run(s.id, n, pos);
+    channelsChanged(s.id); ack({ ok: true, name: n });
+  }));
+  socket.on("renameCategory", guard(({ serverId, from, to }, ack) => {
+    const s = catAuth(serverId); if (!s) return ack({ error: "Vous n'avez pas la permission de gérer les catégories." });
+    const f = catFind(s.id, String(from || "")), n = catName(to);
+    if (!f) return ack({ error: "Catégorie introuvable." });
+    if (!n) return ack({ error: "Donnez un nom à la catégorie." });
+    const other = catFind(s.id, n); if (other && other.toLowerCase() !== f.toLowerCase()) return ack({ error: "Cette catégorie existe déjà." });
+    tx(() => {
+      const row = db.prepare("SELECT position FROM categories WHERE server_id = ? AND name = ?").get(s.id, f);
+      const pos = row ? row.position : db.prepare("SELECT COALESCE(MAX(position),0)+1 AS p FROM categories WHERE server_id = ?").get(s.id).p;
+      db.prepare("DELETE FROM categories WHERE server_id = ? AND name = ?").run(s.id, f);
+      db.prepare("INSERT INTO categories (server_id, name, position) VALUES (?,?,?)").run(s.id, n, pos);
+      db.prepare("UPDATE channels SET category = ? WHERE server_id = ? AND category = ?").run(n, s.id, f);
+    });
+    channelsChanged(s.id); ack({ ok: true });
+  }));
+  socket.on("deleteCategory", guard(({ serverId, name }, ack) => {
+    const s = catAuth(serverId); if (!s) return ack({ error: "Vous n'avez pas la permission de gérer les catégories." });
+    const f = catFind(s.id, String(name || "")); if (!f) return ack({ error: "Catégorie introuvable." });
+    tx(() => {
+      // les salons ne sont jamais supprimés : ils retournent dans la catégorie par défaut de leur type
+      db.prepare("DELETE FROM categories WHERE server_id = ? AND name = ?").run(s.id, f);
+      db.prepare("UPDATE channels SET category = 'Salons' WHERE server_id = ? AND category = ? AND kind = 'text'").run(s.id, f);
+      db.prepare("UPDATE channels SET category = 'Vocal' WHERE server_id = ? AND category = ? AND kind = 'voice'").run(s.id, f);
+    });
+    channelsChanged(s.id); ack({ ok: true });
+  }));
+  socket.on("createChannel", guard(({ serverId, name, topic, kind, category, private: priv, roleIds }, ack) => {
     user = cur();
     const s = q.serverById.get(serverId);
     if (!s || s.id === DM_SERVER || !can(user, s.id, P.CHANNELS)) return ack({ error: "Vous n'avez pas la permission de créer un salon." });
     const n = clean(name, 24).toLowerCase().replace(/\s+/g, "-");
     if (!/^[\p{L}\p{N}_-]{1,24}$/u.test(n)) return ack({ error: "Nom de salon invalide." });
     const k = kind === "voice" ? "voice" : "text";
-    const id = Number(q.insChannel.run(serverId, n, clean(topic, 100), k === "voice" ? "Vocal" : "Salons", k).lastInsertRowid);
+    const cat = category ? catFind(serverId, catName(category)) : null;
+    if (category && !cat) return ack({ error: "Catégorie introuvable." });
+    const id = Number(q.insChannel.run(serverId, n, clean(topic, 100), cat || (k === "voice" ? "Vocal" : "Salons"), k).lastInsertRowid);
     if (priv) { db.prepare("UPDATE channels SET private = 1 WHERE id = ?").run(id); setChannelRoles(q.channel.get(id), roleIds); channelsChanged(serverId); }
     else io.to("srv:" + serverId).emit("channelCreated", { serverId, channel: chView(q.channel.get(id)) });
     ack({ ok: true });
   }));
 
-  socket.on("setChannel", guard(({ channelId, slowmode, readonly, topic, private: priv, roleIds }, ack) => {
+  socket.on("setChannel", guard(({ channelId, slowmode, readonly, topic, category, private: priv, roleIds }, ack) => {
     user = cur();
     const c = q.channel.get(channelId);
     if (!c || c.kind === "dm") return ack({ error: "Salon introuvable." });
@@ -1237,13 +1292,19 @@ io.on("connection", (socket) => {
     const slow = slowmode === undefined ? c.slowmode : Math.max(0, Math.min(SLOW_MAX, Math.floor(Number(slowmode)) || 0));
     const ro = readonly === undefined ? c.readonly : readonly ? 1 : 0;
     const wasPrivate = !!c.private, isPrivate = priv === undefined ? wasPrivate : !!priv;
+    let moved = false;
+    if (category !== undefined) {
+      const cat = catFind(c.server_id, catName(category));
+      if (!cat) return ack({ error: "Catégorie introuvable." });
+      if (cat !== c.category) { db.prepare("UPDATE channels SET category = ? WHERE id = ?").run(cat, c.id); moved = true; }
+    }
     q.updChannel.run(topic === undefined ? c.topic : clean(topic, 100), c.kind === "voice" ? 0 : slow, c.kind === "voice" ? 0 : ro, c.id);
     if (priv !== undefined || roleIds !== undefined) {
       db.prepare("UPDATE channels SET private = ? WHERE id = ?").run(isPrivate ? 1 : 0, c.id);
       setChannelRoles(q.channel.get(c.id), roleIds === undefined ? q.chRoles.all(c.id).map((r) => r.role_id) : roleIds);
     }
     // Tout changement de visibilité : chacun recharge sa propre liste de salons
-    if (wasPrivate || isPrivate) channelsChanged(c.server_id);
+    if (wasPrivate || isPrivate || moved) channelsChanged(c.server_id);
     else io.to("srv:" + c.server_id).emit("channelUpdated", { serverId: c.server_id, channel: chView(q.channel.get(c.id)) });
     ack({ ok: true });
   }));

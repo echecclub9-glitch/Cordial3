@@ -282,6 +282,9 @@ label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .04em
 /* Paramètres du serveur */
 .gearbtn { width: 32px; padding: 0; display: grid; place-items: center; flex: none; }
 .setcard { max-width: 440px; width: calc(100vw - 32px); }
+.catrow { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line, rgba(128,128,128,.25)); }
+.catrow input { flex: 1; min-width: 0; } .catname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.catn { font-size: 12px; opacity: .7; white-space: nowrap; } .catadd { display: flex; gap: 8px; margin: 12px 0; } .catadd input { flex: 1; min-width: 0; }
 .sethd { display: flex; align-items: center; gap: 8px; justify-content: center; min-width: 0; }
 .sethd .sn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .setrow { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 10px 12px; margin-top: 8px; border-radius: 8px; background: rgba(255,255,255,.06); color: var(--fg); cursor: pointer; }
