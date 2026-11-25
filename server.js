@@ -340,6 +340,28 @@ app.post("/api/login", (req, res) => {
   res.json({ token: makeSession(user.id) });
 });
 
+/* ---------- Compte : mot de passe et autres appareils ---------- */
+const passHits = new Map();
+const cutOtherDevices = async (userId, keepToken) => {
+  db.prepare("DELETE FROM sessions WHERE user_id = ? AND token != ?").run(userId, keepToken);
+  for (const s of await io.in("user:" + userId).fetchSockets()) if (s.handshake.auth && s.handshake.auth.token !== keepToken) s.disconnect(true);
+};
+const bearerToken = (req) => { const m = /^Bearer (.+)$/.exec(req.headers.authorization || ""); return m ? m[1] : ""; };
+app.post("/api/password", async (req, res) => {
+  const user = authBearer(req); if (!user) return res.status(401).json({ error: "Connexion requise." });
+  if (hit(passHits, user.id, 60000, 5)) return res.status(429).json({ error: "Trop d'essais, patientez une minute." });
+  const cur = String((req.body || {}).current || ""), next = String((req.body || {}).next || "");
+  if (!checkPassword(cur, user)) return res.status(403).json({ error: "Mot de passe actuel incorrect." });
+  if (next.length < 6 || next.length > 100) return res.status(400).json({ error: "Le nouveau mot de passe doit faire au moins 6 caractères." });
+  if (next === cur) return res.status(400).json({ error: "Choisissez un mot de passe différent de l'actuel." });
+  const salt = crypto.randomBytes(16).toString("hex");
+  db.prepare("UPDATE users SET salt = ?, hash = ? WHERE id = ?").run(salt, hashPassword(next, salt), user.id);
+  await cutOtherDevices(user.id, bearerToken(req)); res.json({ ok: true });
+});
+app.post("/api/sessions/revoke-others", async (req, res) => {
+  const user = authBearer(req); if (!user) return res.status(401).json({ error: "Connexion requise." });
+  await cutOtherDevices(user.id, bearerToken(req)); res.json({ ok: true });
+});
 app.post("/api/logout", (req, res) => { q.delSession.run(String(req.body.token || "")); res.json({ ok: true }); });
 
 /* ---------- Fichiers joints ---------- */

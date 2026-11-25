@@ -102,7 +102,7 @@
     S.token = token;
     const sock = io({ auth: { token } }); S.sock = sock;
     sock.on("connect", () => { $("banner").hidden = true; sock.emit("visibility", { visible: !document.hidden }); });
-    sock.on("disconnect", () => { $("banner").hidden = false; leaveVoice(true); });
+    sock.on("disconnect", (reason) => { $("banner").hidden = false; leaveVoice(true); if (reason === "io server disconnect") setTimeout(() => sock.connect(), 300); }); // coupé par le serveur (session révoquée) : on retente, le refus d'authentification ramène à la connexion
     sock.on("connect_error", (err) => { if (err.message === "auth") { store("cordial-token", null); S.token = null; sock.disconnect(); showAuth(); } else $("banner").hidden = false; });
     sock.on("ready", onReady);
     sock.on("message", onMessage);
@@ -669,11 +669,11 @@
       let i;
       if (f.type === "select") { i = el("select", "field"); f.options.forEach(([v, l]) => { const op = el("option", "", l); op.value = v; if (String(v) === String(f.value)) op.selected = true; i.appendChild(op); }); }
       else if (f.type === "check") { const l = el("label", "check"); i = el("input"); i.type = "checkbox"; i.checked = !!f.value; i.id = "m-" + f.id; l.htmlFor = i.id; l.appendChild(i); l.appendChild(document.createTextNode(f.label)); card.appendChild(l); inputs[f.id] = i; return; }
-      else { i = el("input", "field"); i.placeholder = f.ph || ""; i.maxLength = f.max || 40; i.value = f.value || ""; }
+      else { i = el("input", "field"); i.placeholder = f.ph || ""; i.maxLength = f.max || (f.type === "password" ? 100 : 40); i.value = f.value || ""; if (f.type === "password") { i.type = "password"; i.autocomplete = f.id === "c" ? "current-password" : "new-password"; } }
       i.id = "m-" + f.id; const l = el("label", "", f.label); l.htmlFor = i.id; card.appendChild(l); card.appendChild(i); inputs[f.id] = i;
     });
     const err = el("div", "err"); card.appendChild(err);
-    const api = { v: (k) => (inputs[k].type === "checkbox" ? inputs[k].checked : inputs[k].value.trim()), error: (t) => { err.textContent = t; }, close: () => ov.remove(), card, err };
+    const api = { v: (k) => (inputs[k].type === "checkbox" ? inputs[k].checked : inputs[k].type === "password" ? inputs[k].value : inputs[k].value.trim()), error: (t) => { err.textContent = t; }, close: () => ov.remove(), card, err };
     (o.buttons || []).forEach((b) => {
       const btn = el("button", "btn" + (b.ghost ? " ghost" : "") + (b.danger ? " danger" : ""), b.label); btn.type = "button";
       btn.onclick = () => (b.run ? b.run(api, btn) : api.close()); card.appendChild(btn);
@@ -738,6 +738,43 @@
     document.body.appendChild(m);
     const r = m.getBoundingClientRect(); m.style.left = Math.max(8, Math.min(ev.clientX, innerWidth - r.width - 8)) + "px"; m.style.top = Math.max(8, Math.min(ev.clientY, innerHeight - r.height - 8)) + "px";
   }
+  /* ---------- Paramètres utilisateur ---------- */
+  const api = (method, path, body) => fetch(path, { method, headers: { Authorization: "Bearer " + S.token, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })
+    .then((r) => r.json().catch(() => ({})).then((d) => { if (!r.ok) throw new Error(d.error || "Erreur."); return d; }));
+  function passwordModal() {
+    modal({ title: "Changer le mot de passe", sub: "Vos autres appareils seront déconnectés.", fields: [
+      { id: "c", label: "Mot de passe actuel", type: "password" }, { id: "n", label: "Nouveau mot de passe (6 caractères minimum)", type: "password" }, { id: "n2", label: "Confirmer le nouveau mot de passe", type: "password" }], buttons: [
+      { label: "Changer le mot de passe", run: (m) => {
+        if (m.v("n") !== m.v("n2")) return m.error("Les deux mots de passe ne correspondent pas.");
+        api("POST", "/api/password", { current: m.v("c"), next: m.v("n") }).then(() => { m.close(); toast("Mot de passe modifié."); }).catch((e) => m.error(e.message));
+      } }, { label: "Annuler", ghost: true }] });
+  }
+  function statusModal() {
+    modal({ title: "Mon statut", fields: [{ id: "s", label: "Statut", type: "select", options: STATUSES.map((s) => [s, LABEL[s] + (s === "dnd" ? " (aucune notification)" : s === "invisible" ? " (apparaître hors ligne)" : "")]), value: S.me.status }], buttons: [
+      { label: "Enregistrer", run: (m) => S.sock.emit("status", { status: m.v("s") }, (r) => { if (r && r.ok) { S.me.status = m.v("s"); renderMe(); m.close(); } else m.error((r && r.error) || "Impossible de changer le statut."); }) }, { label: "Annuler", ghost: true }] });
+  }
+  function userSettings() {
+    const card = el("div", "card setcard"); card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Paramètres");
+    card.appendChild(el("h2", "", "Paramètres")); card.appendChild(el("p", "sub", S.me.name));
+    let close = () => {};
+    const row = (icon, title, desc, fn, danger) => { const b = el("button", "setrow" + (danger ? " danger" : "")); b.type = "button"; const i = el("span", "seti"); i.innerHTML = ic(icon, 20); const t = el("span", "sett"); t.append(el("b", "", title), el("small", "", desc)); b.append(i, t); b.onclick = () => { close(); fn(); }; card.appendChild(b); };
+    const sec = (t) => card.appendChild(el("div", "hd setsec", t));
+    sec("Mon compte");
+    row("user", "Mon profil", "Photo, bannière, présentation et statut personnalisé", editProfile);
+    row("shield", "Changer le mot de passe", "Déconnecte vos autres appareils", passwordModal);
+    row("power", "Déconnecter mes autres appareils", "Garde seulement cet appareil connecté", () => modal({ title: "Déconnecter les autres appareils ?", sub: "Tous les autres navigateurs et applications devront se reconnecter.", buttons: [
+      { label: "Déconnecter", danger: true, run: (m) => api("POST", "/api/sessions/revoke-others").then(() => { m.close(); toast("Autres appareils déconnectés."); }).catch((e) => m.error(e.message)) }, { label: "Annuler", ghost: true }] }));
+    sec("Notifications");
+    row(S.me.status === "dnd" ? "bell-off" : "circle", "Statut", LABEL[S.me.status] + (S.me.status === "dnd" ? " : aucune notification" : ""), statusModal);
+    const on = S.push || S.local;
+    row(on ? "bell" : "bell-off", "Notifications sur cet appareil", on ? "Activées : appuyez pour les désactiver" : "Désactivées : appuyez pour les activer", () => $("bBell").click());
+    sec("Session");
+    row("log-out", "Se déconnecter", "Fermer la session sur cet appareil", logout, true);
+    const bye = el("button", "btn ghost", "Fermer"); bye.type = "button"; card.appendChild(bye);
+    close = overlay(card); bye.onclick = close;
+  }
+  $("bPrefs").onclick = userSettings;
+
   /* ---------- Sanctions ---------- */
   const DURATIONS = { mute: [["10", "10 minutes"], ["60", "1 heure"], ["1440", "1 jour"]], ban: [["1", "1 heure"], ["24", "1 jour"], ["0", "Définitif"]] };
   const TYPE_LABEL = { warn: "Avertissement", mute: "Sourdine", unmute: "Sourdine levée", kick: "Expulsion", ban: "Bannissement", unban: "Bannissement levé" };

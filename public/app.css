@@ -315,3 +315,4 @@ label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .04em
 /* Notifications en sourdine */
 .ch.muted, .srv.muted { opacity: .55; } .ch.muted.on { opacity: 1; } .ch.muted .lock svg { vertical-align: -2px; }
 #bMute.active { color: var(--bad); }
+.setsec { margin: 14px 0 0; }
