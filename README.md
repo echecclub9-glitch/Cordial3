@@ -54,7 +54,7 @@ Variables optionnelles :
 - **Messages vocaux** : bouton micro dans la zone de saisie, 2 minutes maximum, lecteur avec progression et vitesse ×1 / ×1,5 / ×2 (nécessite HTTPS et un micro)
 - **Caméra** dans les salons vocaux (bouton 🎥 de la barre vocale), utilisable en même temps que le partage d'écran ; l'image passe de navigateur à navigateur (environ 0,7 Mbit/s par spectateur)
 - Bot **Cordibot** : `/aide`, `/de`, `/pile`, `/choix a|b|c`, `/sondage Question|Option 1|Option 2`
-- **Catégories de salons** : « Paramètres du serveur » → Catégories (droit « gérer les salons ») pour créer, renommer et supprimer des catégories, même vides (20 max). Choisissez la catégorie à la création d'un salon ou dans ses réglages ; supprimer une catégorie ne supprime pas ses salons (ils reviennent dans « Salons » / « Vocal »).
+- **Catégories de salons** : « Paramètres du serveur » → Catégories (droit « gérer les salons »). Une carte par catégorie avec ses salons : flèches pour réordonner, renommer, « + » pour créer un salon dedans, suppression (ses salons reviennent dans « Salons » / « Vocal »). Dans la liste de salons, chaque catégorie se replie d'un clic (retenu sur votre appareil) et a son bouton « + ». 20 catégories max.
 
 ## Vocal et notifications : à savoir
 

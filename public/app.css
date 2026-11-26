@@ -282,9 +282,21 @@ label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .04em
 /* Paramètres du serveur */
 .gearbtn { width: 32px; padding: 0; display: grid; place-items: center; flex: none; }
 .setcard { max-width: 440px; width: calc(100vw - 32px); }
+.cat { gap: 2px; padding: 14px 4px 2px 2px; }
+.cattg { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; text-align: left; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; padding: 2px 4px; border-radius: 4px; }
+.cattg:hover { color: var(--text, #fff); } .cattg .chv { display: inline-flex; } .catlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catcount { margin-left: 6px; font-size: 11px; background: var(--hover); border-radius: 8px; padding: 0 6px; }
+.catplus { width: 22px; height: 22px; border-radius: 4px; color: var(--muted); display: none; align-items: center; justify-content: center; } .cat:hover .catplus, .catplus:focus-visible { display: inline-flex; } .catplus:hover { background: var(--hover); color: var(--text, #fff); }
+@media (hover: none) { .catplus { display: inline-flex; } }
+.catmgr { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; max-height: 52vh; overflow-y: auto; }
+.catbox { border: 1px solid var(--line, rgba(128,128,128,.3)); border-radius: 10px; padding: 8px 10px; }
+.cathead { display: flex; align-items: center; gap: 6px; } .cathead .sp { flex: 1; min-width: 0; }
+.cathead .ibtn { width: 28px; height: 28px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); } .cathead .ibtn:hover:not(:disabled) { background: var(--hover); color: var(--text, #fff); } .cathead .ibtn:disabled { opacity: .3; cursor: default; } .cathead .ibtn.danger:hover { color: #ff6b6b; }
+.cathead input { flex: 1; min-width: 0; }
+.catchs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; } .catchip { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--hover); color: var(--muted); } .catempty { font-size: 12px; opacity: .6; margin-top: 6px; }
 .catrow { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line, rgba(128,128,128,.25)); }
 .catrow input { flex: 1; min-width: 0; } .catname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.catn { font-size: 12px; opacity: .7; white-space: nowrap; } .catadd { display: flex; gap: 8px; margin: 12px 0; } .catadd input { flex: 1; min-width: 0; }
+.catn { font-size: 12px; opacity: .7; white-space: nowrap; } .catadd { display: flex; gap: 8px; margin: 12px 0; } .catadd .field { flex: 1; min-width: 0; width: auto; } .catadd .btn { width: auto; padding: 0 18px; margin: 0; } .cathead .field { padding: 6px 8px; width: auto; }
 .sethd { display: flex; align-items: center; gap: 8px; justify-content: center; min-width: 0; }
 .sethd .sn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .setrow { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 10px 12px; margin-top: 8px; border-radius: 8px; background: rgba(255,255,255,.06); color: var(--fg); cursor: pointer; }

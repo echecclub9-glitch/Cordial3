@@ -598,6 +598,13 @@ function catsOf(sid) {
   return out;
 }
 const CAT_MAX = 20;
+// Écrit l'ordre actuel (catégories par défaut comprises) dans la table, pour que chacune ait une position stable
+function materializeCats(sid) {
+  const have = catsOf(sid), saved = db.prepare("SELECT name FROM categories WHERE server_id = ?").all(sid).length;
+  if (saved === have.length) return;
+  db.prepare("DELETE FROM categories WHERE server_id = ?").run(sid);
+  have.forEach((n, i) => db.prepare("INSERT INTO categories (server_id, name, position) VALUES (?,?,?)").run(sid, n, i + 1));
+}
 const visibleChannels = (sid, user) => q.channelsOf.all(sid).filter((c) => canSee(user, c)).map((c) => chView(c, user));
 function serverView(s, user) {
   return { id: s.id, name: s.name, abbr: s.abbr, code: s.code, owner: s.owner_id, partner: !!s.partner, logo: s.partner ? s.partner_logo : null, icon: s.icon, banner: s.banner, isDefault: s.id === DEFAULT_SERVER, channels: visibleChannels(s.id, user), categories: catsOf(s.id) };
@@ -1238,8 +1245,11 @@ io.on("connection", (socket) => {
     const n = catName(name); if (!n) return ack({ error: "Donnez un nom à la catégorie." });
     if (catFind(s.id, n)) return ack({ error: "Cette catégorie existe déjà." });
     if (catsOf(s.id).length >= CAT_MAX) return ack({ error: "Maximum " + CAT_MAX + " catégories." });
-    const pos = db.prepare("SELECT COALESCE(MAX(position),0)+1 AS p FROM categories WHERE server_id = ?").get(s.id).p;
-    db.prepare("INSERT INTO categories (server_id, name, position) VALUES (?,?,?)").run(s.id, n, pos);
+    tx(() => {
+      materializeCats(s.id);
+      const pos = db.prepare("SELECT COALESCE(MAX(position),0)+1 AS p FROM categories WHERE server_id = ?").get(s.id).p;
+      db.prepare("INSERT INTO categories (server_id, name, position) VALUES (?,?,?)").run(s.id, n, pos);
+    });
     channelsChanged(s.id); ack({ ok: true, name: n });
   }));
   socket.on("renameCategory", guard(({ serverId, from, to }, ack) => {
@@ -1249,11 +1259,22 @@ io.on("connection", (socket) => {
     if (!n) return ack({ error: "Donnez un nom à la catégorie." });
     const other = catFind(s.id, n); if (other && other.toLowerCase() !== f.toLowerCase()) return ack({ error: "Cette catégorie existe déjà." });
     tx(() => {
+      materializeCats(s.id);
       const row = db.prepare("SELECT position FROM categories WHERE server_id = ? AND name = ?").get(s.id, f);
       const pos = row ? row.position : db.prepare("SELECT COALESCE(MAX(position),0)+1 AS p FROM categories WHERE server_id = ?").get(s.id).p;
       db.prepare("DELETE FROM categories WHERE server_id = ? AND name = ?").run(s.id, f);
       db.prepare("INSERT INTO categories (server_id, name, position) VALUES (?,?,?)").run(s.id, n, pos);
       db.prepare("UPDATE channels SET category = ? WHERE server_id = ? AND category = ?").run(n, s.id, f);
+    });
+    channelsChanged(s.id); ack({ ok: true });
+  }));
+  socket.on("reorderCategories", guard(({ serverId, names }, ack) => {
+    const s = catAuth(serverId); if (!s) return ack({ error: "Vous n'avez pas la permission de gérer les catégories." });
+    const have = catsOf(s.id), want = Array.isArray(names) ? names.map((n) => String(n)) : [];
+    if (want.length !== have.length || !have.every((h) => want.includes(h))) return ack({ error: "Liste de catégories périmée, réessayez." });
+    tx(() => {
+      db.prepare("DELETE FROM categories WHERE server_id = ?").run(s.id);
+      want.forEach((n, i) => db.prepare("INSERT INTO categories (server_id, name, position) VALUES (?,?,?)").run(s.id, n, i + 1));
     });
     channelsChanged(s.id); ack({ ok: true });
   }));

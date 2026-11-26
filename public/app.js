@@ -302,10 +302,19 @@
     nameWithLogo($("sName"), s); $("bSet").hidden = false;
     { const hd = $("sName").parentNode; hd.classList.toggle("hasbanner", !!s.banner); hd.style.backgroundImage = s.banner ? "linear-gradient(transparent 30%, rgba(0,0,0,.7)), url(/files/" + s.banner + ")" : ""; }
     const canManage = canIn(PERM.CHANNELS);
-    if (canManage) { const a = icText(el("button", "addch"), "plus", "Créer un salon"); a.onclick = channelCreateModal; box.appendChild(a); }
+    if (canManage) { const a = icText(el("button", "addch"), "plus", "Créer un salon"); a.onclick = () => channelCreateModal(); box.appendChild(a); }
     const cats = (s.categories || []).slice(); s.channels.forEach((c) => { if (cats.indexOf(c.category) < 0) cats.push(c.category); });
     cats.forEach((cat) => {
-      box.appendChild(el("div", "cat", cat));
+      const fold = catFolded(s.id, cat), head = el("div", "cat");
+      const tg = el("button", "cattg"); tg.type = "button"; tg.setAttribute("aria-expanded", String(!fold)); tg.title = fold ? "Déplier" : "Replier";
+      const chv = el("span", "chv"); chv.innerHTML = ic(fold ? "chev-right" : "chev-down", 14); tg.appendChild(chv); tg.appendChild(el("span", "catlabel", cat));
+      const cnt = s.channels.filter((c) => c.category === cat).length;
+      if (fold && cnt) tg.appendChild(el("span", "catcount", String(cnt)));
+      tg.onclick = () => { catFold(s.id, cat, !fold); renderSide(); };
+      head.appendChild(tg);
+      if (canManage) { const pl = el("button", "catplus"); pl.type = "button"; pl.innerHTML = ic("plus", 16); pl.title = "Créer un salon dans « " + cat + " »"; pl.setAttribute("aria-label", pl.title); pl.onclick = () => channelCreateModal(cat); head.appendChild(pl); }
+      box.appendChild(head);
+      if (fold) return;
       s.channels.filter((c) => c.category === cat).forEach((c) => {
         const row = el("div", "chrow"), voice = c.kind === "voice", u = S.unread[c.id] || 0;
         const b = el("button", "ch" + (!voice && c.id === S.cid ? " on" : "") + (u ? " unread" : "") + (chMuted(c.id) ? " muted" : ""));
@@ -705,13 +714,19 @@
     roles.forEach((r) => f.push({ id: "pr" + r.id, type: "check", label: "   ↳ " + r.name, value: on.has(r.id) }));
     return { fields: f, read: (m) => ({ private: m.v("p"), roleIds: roles.filter((r) => m.v("pr" + r.id)).map((r) => r.id) }) };
   }
+  // Catégories repliées : préférence personnelle, gardée sur cet appareil
+  const foldKey = (sid, cat) => sid + "|" + cat;
+  function catFolded(sid, cat) { try { return (JSON.parse(localStorage.getItem("cordial-folds") || "[]")).indexOf(foldKey(sid, cat)) >= 0; } catch (e) { return false; } }
+  function catFold(sid, cat, on) {
+    try { const a = JSON.parse(localStorage.getItem("cordial-folds") || "[]").filter((k) => k !== foldKey(sid, cat)); if (on) a.push(foldKey(sid, cat)); localStorage.setItem("cordial-folds", JSON.stringify(a)); } catch (e) {}
+  }
   function catOptions(s, withDefault) {
     const cats = (s.categories || []).slice(); s.channels.forEach((c) => { if (cats.indexOf(c.category) < 0) cats.push(c.category); });
     return (withDefault ? [["", "Par défaut (Salons / Vocal)"]] : []).concat(cats.map((c) => [c, c]));
   }
-  function channelCreateModal() {
-    const pv = privacyFields(null);
-    modal({ title: "Créer un salon", fields: [{ id: "n", label: "Nom du salon", ph: "ex. projets", max: 24 }, { id: "k", label: "Type", type: "select", options: [["text", "Salon textuel"], ["voice", "Salon vocal"]], value: "text" }, { id: "cat", label: "Catégorie", type: "select", options: catOptions(server(), true), value: "" }, ...pv.fields, { id: "t", label: "Description (facultatif)", ph: "À quoi sert ce salon ?", max: 100 }],
+  function channelCreateModal(presetCat) {
+    const pv = privacyFields(null); if (typeof presetCat !== "string") presetCat = "";
+    modal({ title: "Créer un salon", fields: [{ id: "n", label: "Nom du salon", ph: "ex. projets", max: 24 }, { id: "k", label: "Type", type: "select", options: [["text", "Salon textuel"], ["voice", "Salon vocal"]], value: "text" }, { id: "cat", label: "Catégorie", type: "select", options: catOptions(server(), true), value: presetCat }, ...pv.fields, { id: "t", label: "Description (facultatif)", ph: "À quoi sert ce salon ?", max: 100 }],
       buttons: [{ label: "Créer", run: (m) => S.sock.emit("createChannel", { serverId: S.sid, name: m.v("n"), topic: m.v("t"), kind: m.v("k"), category: m.v("cat") || undefined, ...pv.read(m) }, (r) => { if (r && r.error) m.error(r.error); else m.close(); }) }, { label: "Annuler", ghost: true }] });
   }
   function channelSettingsModal(c) {
@@ -1015,27 +1030,45 @@
   function categoriesModal() {
     const s = server(); if (!s) return;
     const card = el("div", "card setcard"); card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Catégories");
-    card.appendChild(el("h2", "", "Catégories")); card.appendChild(el("p", "sub", "Regroupez vos salons. Supprimer une catégorie ne supprime pas ses salons."));
-    const list = el("div", "catlist"); card.appendChild(list);
+    card.appendChild(el("h2", "", "Catégories")); card.appendChild(el("p", "sub", "Organisez vos salons : réordonnez avec les flèches, renommez, ou créez un salon directement dans une catégorie. Supprimer une catégorie ne supprime pas ses salons."));
+    const mgr = el("div", "catmgr"); card.appendChild(mgr);
     const err = el("div", "err"); card.appendChild(err);
-    const cb = (r) => { if (r && r.error) err.textContent = r.error; else err.textContent = ""; };
+    const cb = (r) => { err.textContent = r && r.error ? r.error : ""; };
+    const ib = (icon, title, fn, cls) => { const b = el("button", "ibtn" + (cls ? " " + cls : "")); b.type = "button"; b.innerHTML = ic(icon, 16); b.title = title; b.setAttribute("aria-label", title); b.onclick = fn; return b; };
+    let editing = null;
     function draw() {
-      list.innerHTML = "";
-      catOptions(s, false).forEach(([name]) => {
-        const n = s.channels.filter((c) => c.category === name).length;
-        const r = el("div", "catrow"); r.appendChild(el("span", "catname", name)); r.appendChild(el("span", "catn", n + " salon" + (n > 1 ? "s" : "")));
-        const ren = el("button", "btn ghost sm", "Renommer"); ren.type = "button";
-        ren.onclick = () => { const inp = el("input"); inp.value = name; inp.maxLength = 30; r.replaceChild(inp, r.firstChild); inp.focus(); ren.textContent = "OK";
-          const go2 = () => S.sock.emit("renameCategory", { serverId: s.id, from: name, to: inp.value }, cb); ren.onclick = go2; inp.onkeydown = (e) => { if (e.key === "Enter") go2(); }; };
-        const del = el("button", "btn ghost sm danger", "Supprimer"); del.type = "button";
-        del.onclick = () => { if (del.dataset.arm) S.sock.emit("deleteCategory", { serverId: s.id, name }, cb); else { del.dataset.arm = "1"; del.textContent = "Confirmer"; } };
-        r.appendChild(ren); r.appendChild(del); list.appendChild(r);
+      mgr.innerHTML = "";
+      const names = catOptions(s, false).map((o) => o[0]);
+      names.forEach((name, i) => {
+        const box = el("div", "catbox"), head = el("div", "cathead"); box.appendChild(head);
+        if (editing === name) {
+          const inp = el("input", "field"); inp.value = name; inp.maxLength = 30; inp.setAttribute("aria-label", "Nouveau nom");
+          const save = () => S.sock.emit("renameCategory", { serverId: s.id, from: name, to: inp.value }, (r) => { cb(r); if (r && r.ok) { editing = null; } });
+          inp.onkeydown = (e) => { if (e.key === "Enter") save(); else if (e.key === "Escape") { editing = null; draw(); e.stopPropagation(); } };
+          head.appendChild(inp); head.appendChild(ib("check", "Enregistrer", save)); head.appendChild(ib("x", "Annuler", () => { editing = null; draw(); }));
+          setTimeout(() => { inp.focus(); inp.select(); }, 0);
+        } else {
+          head.appendChild(el("strong", "catname sp", name));
+          head.appendChild(ib("chev-up", "Monter", () => { const n = names.slice(); n.splice(i, 1); n.splice(i - 1, 0, name); S.sock.emit("reorderCategories", { serverId: s.id, names: n }, cb); }, "")).disabled = i === 0;
+          head.appendChild(ib("chev-down", "Descendre", () => { const n = names.slice(); n.splice(i, 1); n.splice(i + 1, 0, name); S.sock.emit("reorderCategories", { serverId: s.id, names: n }, cb); }, "")).disabled = i === names.length - 1;
+          head.appendChild(ib("plus", "Créer un salon ici", () => channelCreateModal(name)));
+          head.appendChild(ib("edit", "Renommer", () => { editing = name; draw(); }));
+          const del = ib("trash", "Supprimer la catégorie", () => {
+            if (del.dataset.arm) S.sock.emit("deleteCategory", { serverId: s.id, name }, cb);
+            else { del.dataset.arm = "1"; del.classList.add("armed"); del.title = "Cliquez encore pour confirmer"; del.innerHTML = ic("alert", 16); del.style.color = "#ff6b6b"; }
+          }, "danger");
+          head.appendChild(del);
+        }
+        const chs = s.channels.filter((c) => c.category === name);
+        if (chs.length) { const w = el("div", "catchs"); chs.forEach((c) => w.appendChild(el("span", "catchip", (c.kind === "voice" ? "🔊 " : "# ") + c.name))); box.appendChild(w); }
+        else box.appendChild(el("div", "catempty", "Aucun salon dans cette catégorie."));
+        mgr.appendChild(box);
       });
     }
     draw(); S.catRedraw = draw;
-    const add = el("div", "catadd"), inp = el("input"); inp.placeholder = "Nouvelle catégorie"; inp.maxLength = 30; inp.id = "catNew";
+    const add = el("div", "catadd"), inp = el("input", "field"); inp.placeholder = "Nom de la nouvelle catégorie"; inp.maxLength = 30; inp.id = "catNew";
     const ab = el("button", "btn", "Créer"); ab.type = "button";
-    const doAdd = () => { if (!inp.value.trim()) return; S.sock.emit("createCategory", { serverId: s.id, name: inp.value }, (r) => { cb(r); if (r && r.ok) inp.value = ""; }); };
+    const doAdd = () => { if (!inp.value.trim()) return; S.sock.emit("createCategory", { serverId: s.id, name: inp.value }, (r) => { cb(r); if (r && r.ok) { inp.value = ""; setTimeout(() => { mgr.scrollTop = mgr.scrollHeight; }, 50); } }); };
     ab.onclick = doAdd; inp.onkeydown = (e) => { if (e.key === "Enter") doAdd(); };
     add.appendChild(inp); add.appendChild(ab); card.appendChild(add);
     const x = el("button", "btn ghost", "Fermer"); x.type = "button"; card.appendChild(x);
