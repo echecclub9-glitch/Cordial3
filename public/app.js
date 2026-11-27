@@ -40,7 +40,7 @@
   const dmOf = (id) => S.dms.find((d) => d.id === id);
   const firstText = (s) => { const c = s && s.channels.find((x) => x.kind === "text"); return c ? c.id : null; };
   function channel() {
-    if (S.view === "dm") { const d = dmOf(S.cid); return d ? { id: d.id, name: d.other.name, topic: "", kind: "dm", slowmode: 0, readonly: false } : null; }
+    if (S.view === "dm") { const d = dmOf(S.cid); return d ? { id: d.id, name: d.other.name, topic: d.group ? d.members.length + " membres" : "", kind: "dm", group: !!d.group, slowmode: 0, readonly: false } : null; }
     const s = server(); return (s && s.channels.find((c) => c.id === S.cid && c.kind === "text")) || null;
   }
   function privileged() {
@@ -136,6 +136,14 @@
     sock.on("userDeleted", (d) => { Object.keys(S.msgs).forEach((k) => { S.msgs[k] = S.msgs[k].filter((m) => m.user.id !== d.userId); }); loadMembers(S.sid); renderMsgs(); });
     sock.on("social", (s) => { S.social = s; socialChanged(); });
     sock.on("friendNotice", (d) => toast(d.text));
+    sock.on("groupUpdated", (d) => { const i = S.dms.findIndex((x) => x.id === d.id); if (i < 0) S.dms.push(d); else { d.voice = S.dms[i].voice; S.dms[i] = d; } renderSide(); renderTop(); if (S.cid === d.id) renderMsgs(false); if (S.grpRedraw) S.grpRedraw(); });
+    sock.on("groupLeft", (d) => {
+      S.dms = S.dms.filter((x) => x.id !== d.channelId); delete S.msgs[d.channelId];
+      if (V.cid === d.channelId) leaveVoice(true);
+      if (S.view === "dm" && S.cid === d.channelId) S.cid = S.dms[0] ? S.dms[0].id : null;
+      if (d.removed) toast("Vous avez été retiré du groupe « " + d.name + " ».");
+      if (S.grpClose) S.grpClose(); renderAll();
+    });
     sock.on("dmOpened", (d) => { if (!dmOf(d.id)) S.dms.push(d); renderSide(); renderRail(); });
     sock.on("roleChanged", (d) => { S.me.role = d.role; renderMe(); renderMsgs(); toast(d.role === "mod" ? "Vous êtes maintenant modérateur." : "Votre rôle de modérateur a été retiré."); });
     sock.on("announce", (d) => { const a = $("announce"); a.textContent = "📢 " + d.text; a.hidden = false; clearTimeout(S.annT); S.annT = setTimeout(() => { a.hidden = true; }, 45000); });
@@ -281,6 +289,74 @@
     const x = el("button", "btn ghost", "Fermer"); x.type = "button"; card.appendChild(x);
     const closeOv = overlay(card); const closeFr = () => { S.socRedraw = null; closeOv(); }; x.onclick = closeFr;
   }
+  /* ---------- Groupes de messages privés ---------- */
+  function groupCreateModal() {
+    const card = el("div", "card setcard"); card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Nouveau groupe");
+    card.appendChild(el("h2", "", "Nouveau groupe")); card.appendChild(el("p", "sub", "Choisissez au moins deux amis (10 personnes maximum, vous comprise). Seuls vos amis peuvent être ajoutés."));
+    const name = el("input", "field"); name.id = "grpName"; name.placeholder = "Nom du groupe (facultatif)"; name.maxLength = 40; card.appendChild(name);
+    const list = el("div", "frlist"); card.appendChild(list); const err = el("div", "err"); card.appendChild(err);
+    const pick = new Set();
+    if (!S.social.friends.length) list.appendChild(el("div", "emptyside", "Ajoutez d'abord des amis pour créer un groupe."));
+    S.social.friends.forEach((u) => {
+      const r = el("label", "frrow pickrow"); const cb = el("input"); cb.type = "checkbox"; cb.dataset.uid = u.id; cb.onchange = () => { if (cb.checked) pick.add(u.id); else pick.delete(u.id); };
+      r.appendChild(cb); r.appendChild(avatar(u, u.status)); const t = el("div", "frname"); t.appendChild(el("b", "", u.name)); r.appendChild(t); list.appendChild(r);
+    });
+    const go2 = el("button", "btn", "Créer le groupe"); go2.type = "button"; const x = el("button", "btn ghost", "Annuler"); x.type = "button";
+    card.appendChild(go2); card.appendChild(x); const close = overlay(card); x.onclick = close;
+    go2.onclick = () => S.sock.emit("createGroup", { name: name.value, userIds: [...pick] }, (r) => {
+      if (r && r.error) { err.textContent = r.error; return; }
+      close(); if (!dmOf(r.dm.id)) S.dms.push(r.dm); go("dm", null, r.dm.id);
+    });
+  }
+  function groupSettingsModal() {
+    const c = channel(); if (!c || !c.group) return; const cid = c.id;
+    const card = el("div", "card setcard"); card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Réglages du groupe");
+    const body = el("div"); card.appendChild(body); const err = el("div", "err"); card.appendChild(err);
+    const authHdr = { Authorization: "Bearer " + S.token };
+    const pickAdd = new Set();
+    function paint() {
+      const d = dmOf(cid); if (!d) return close(); const mine = d.owner === S.me.id; body.innerHTML = "";
+      body.appendChild(el("h2", "", "Réglages du groupe"));
+      const top = el("div", "simg"), prev = el("div", "sprev icon"); if (d.other.avatar) prev.style.backgroundImage = "url(/files/" + d.other.avatar + ")"; else { prev.textContent = d.other.name[0].toUpperCase(); prev.style.background = "#5865f2"; }
+      const info = el("div", "simginfo"); info.append(el("b", "", "Icône du groupe"), el("small", "", mine ? "Carrée, 1 Mo maximum" : "Modifiable par le créateur"));
+      if (mine) {
+        const fi = el("input"); fi.type = "file"; fi.accept = "image/png,image/jpeg,image/gif,image/webp"; fi.hidden = true;
+        fi.onchange = async () => { const f = fi.files[0]; if (!f) return; err.textContent = ""; const r = await fetch("/api/groups/" + cid + "/icon", { method: "POST", headers: { ...authHdr, "Content-Type": "application/octet-stream" }, body: f }); if (!r.ok) err.textContent = (await r.json().catch(() => ({}))).error || "Envoi impossible."; };
+        const up = el("button", "pbtn", d.other.avatar ? "Changer" : "Choisir une image"); up.type = "button"; up.onclick = () => fi.click(); info.append(up, fi);
+        if (d.other.avatar) { const rm = el("button", "pbtn ghost", "Retirer"); rm.type = "button"; rm.onclick = () => fetch("/api/groups/" + cid + "/icon", { method: "DELETE", headers: authHdr }); info.appendChild(rm); }
+      }
+      top.append(prev, info); body.appendChild(top);
+      if (mine) {
+        const row = el("div", "catadd"), inp = el("input", "field"); inp.id = "grpRename"; inp.value = d.other.name; inp.maxLength = 40; const sb = el("button", "btn", "Renommer"); sb.type = "button";
+        const save = () => S.sock.emit("groupRename", { channelId: cid, name: inp.value }, (r) => { err.textContent = r && r.error ? r.error : ""; });
+        inp.onkeydown = (e) => { if (e.key === "Enter") save(); }; sb.onclick = save; row.append(inp, sb); body.appendChild(row);
+      }
+      body.appendChild(el("h3", "", "Membres · " + d.members.length));
+      const list = el("div", "frlist");
+      d.members.forEach((u) => {
+        const r = el("div", "frrow"); r.appendChild(avatar(u, u.status)); const t = el("div", "frname"); t.appendChild(el("b", "", u.name + (u.id === S.me.id ? " (vous)" : ""))); if (u.id === d.owner) t.appendChild(el("small", "", "Créateur du groupe")); r.appendChild(t);
+        if (mine && u.id !== S.me.id) { const a = el("div", "fract"), rb = el("button", "btn ghost sm", "Retirer"); rb.type = "button"; rb.onclick = () => S.sock.emit("groupRemove", { channelId: cid, userId: u.id }, (x) => { err.textContent = x && x.error ? x.error : ""; }); a.appendChild(rb); r.appendChild(a); }
+        list.appendChild(r);
+      });
+      body.appendChild(list);
+      if (mine) {
+        const cands = S.social.friends.filter((f) => !d.members.some((m) => m.id === f.id));
+        if (cands.length && d.members.length < 10) {
+          body.appendChild(el("h3", "", "Ajouter des amis")); const al = el("div", "frlist");
+          cands.forEach((u) => { const r = el("label", "frrow pickrow"); const cb = el("input"); cb.type = "checkbox"; cb.checked = pickAdd.has(u.id); cb.onchange = () => { if (cb.checked) pickAdd.add(u.id); else pickAdd.delete(u.id); }; r.appendChild(cb); r.appendChild(avatar(u, u.status)); const t = el("div", "frname"); t.appendChild(el("b", "", u.name)); r.appendChild(t); al.appendChild(r); });
+          body.appendChild(al); const ab = el("button", "btn", "Ajouter la sélection"); ab.type = "button";
+          ab.onclick = () => { if (!pickAdd.size) return; S.sock.emit("groupAdd", { channelId: cid, userIds: [...pickAdd] }, (x) => { if (x && x.error) err.textContent = x.error; else { pickAdd.clear(); err.textContent = ""; } }); }; body.appendChild(ab);
+        }
+      }
+      const lv = el("button", "btn ghost danger", "Quitter le groupe"); lv.type = "button";
+      lv.onclick = () => modal({ title: "Quitter « " + d.other.name + " » ?", sub: mine && d.members.length > 1 ? "Un autre membre deviendra le créateur du groupe." : "Vous ne pourrez plus lire ses messages.", buttons: [
+        { label: "Quitter le groupe", danger: true, run: (m) => S.sock.emit("groupLeave", { channelId: cid }, (r) => { if (r && r.error) m.error(r.error); else m.close(); }) }, { label: "Annuler", ghost: true }] });
+      body.appendChild(lv);
+      const bye = el("button", "btn ghost", "Fermer"); bye.type = "button"; bye.onclick = () => close(); body.appendChild(bye);
+    }
+    let close = () => {}; const closeOv = overlay(card); close = () => { S.grpRedraw = null; S.grpClose = null; closeOv(); };
+    S.grpRedraw = paint; S.grpClose = close; paint();
+  }
   function onMessage(m) {
     const mine = m.user.id === S.me.id;
     if (S.msgs[m.channelId]) S.msgs[m.channelId].push(m);
@@ -298,7 +374,7 @@
   }
   function onPresence(p) {
     (S.members[p.serverId] || []).forEach((m) => { if (m.id === p.id) m.status = p.status; });
-    S.dms.forEach((d) => { if (d.other.id === p.id) d.other.status = p.status; });
+    S.dms.forEach((d) => { if (d.other.id === p.id) d.other.status = p.status; if (d.members) d.members.forEach((m) => { if (m.id === p.id) m.status = p.status; }); });
     if (p.serverId === S.sid) renderMembers();
     if (S.view === "dm") renderSide();
   }
@@ -368,11 +444,12 @@
     $("app").classList.toggle("dmview", S.view === "dm");
     if (S.view === "dm") {
       $("sName").textContent = "Messages privés"; $("bSet").hidden = true; $("sName").parentNode.classList.remove("hasbanner"); $("sName").parentNode.style.backgroundImage = "";
+      { const gb = icText(el("button", "dmrow frbtn"), "users", "Nouveau groupe"); gb.type = "button"; gb.onclick = () => groupCreateModal(); box.appendChild(gb); }
       { const fb = icText(el("button", "dmrow frbtn"), "user", "Amis"); fb.type = "button"; const n = S.social.incoming.length; if (n) fb.appendChild(el("span", "badge", String(n))); fb.onclick = () => friendsModal(n ? "pending" : "all"); box.appendChild(fb); }
       if (!S.dms.length) { box.appendChild(el("div", "emptyside", "Aucune conversation. Cliquez sur un membre d'un serveur, puis sur « Écrire à… » pour lui envoyer un message.")); return; }
       S.dms.forEach((d) => {
         const u = S.unread[d.id] || 0;
-        const b = el("button", "dmrow" + (d.id === S.cid ? " on" : "") + (u ? " unread" : "")); b.appendChild(avatar(d.other, d.other.status)); b.appendChild(el("span", "", d.other.name));
+        const b = el("button", "dmrow" + (d.id === S.cid ? " on" : "") + (u ? " unread" : "")); b.appendChild(avatar(d.other, d.group ? null : d.other.status)); const nm = el("span", "dmname"); nm.appendChild(el("span", "", d.other.name)); if (d.group) nm.appendChild(el("small", "", d.members.length + " membres")); b.appendChild(nm);
         if (u && d.id !== S.cid) b.appendChild(el("span", "badge", String(u)));
         b.onclick = () => go("dm", null, d.id); box.appendChild(b);
       });
@@ -454,7 +531,7 @@
     $("tName").textContent = c ? (c.kind === "dm" ? "@ " : "# ") + c.name : "";
     $("tTopic").textContent = c ? c.topic : "";
     $("bSearch").hidden = $("bPins").hidden = !c;
-    { const o = c && c.kind === "dm" ? dmPeer(c) : null, ok = !!o && o.role !== "bot" && !isBlockedId(o.id); $("bCall").hidden = $("bVideo").hidden = !ok; renderCallBar(); }
+    { const o = c && c.kind === "dm" ? dmPeer(c) : null, ok = !!o && o.role !== "bot" && !isBlockedId(o.id); $("bCall").hidden = $("bVideo").hidden = !ok; $("bGroup").hidden = !(c && c.group); renderCallBar(); }
     updateComposer();
   }
   function updateComposer() {
@@ -463,7 +540,7 @@
     const ro = !c || (c.readonly && !privileged()) || muted;
     inp.disabled = ro; box.classList.toggle("off", ro); $("bMic").disabled = ro;
     const left = c && S.cool[c.id] ? Math.ceil((S.cool[c.id] - Date.now()) / 1000) : 0;
-    inp.placeholder = !c ? "" : muted ? "Vous êtes en sourdine jusqu'à " + WHEN(mutedUntil) + "." : c.readonly && !privileged() ? "Ce salon est en lecture seule." : left > 0 ? "Mode lent : encore " + left + " s" : "Envoyer un message " + (c.kind === "dm" ? "à " + c.name : "dans #" + c.name);
+    inp.placeholder = !c ? "" : muted ? "Vous êtes en sourdine jusqu'à " + WHEN(mutedUntil) + "." : c.readonly && !privileged() ? "Ce salon est en lecture seule." : left > 0 ? "Mode lent : encore " + left + " s" : "Envoyer un message " + (c.group ? "au groupe " + c.name : c.kind === "dm" ? "à " + c.name : "dans #" + c.name);
   }
   setInterval(() => { const c = channel(); if (c && (S.cool[c.id] || ((S.roles[S.sid] || {}).mutedUntil || 0))) updateComposer(); }, 500);
 
@@ -596,8 +673,8 @@
     if (S.more[c.id]) { const mb = el("button", "more", "Charger les messages précédents"); mb.onclick = () => loadHistory(c.id, list[0] && list[0].id); box.appendChild(mb); }
     else {
       const w = el("div", "welcome");
-      w.appendChild(el("h3", "", c.kind === "dm" ? "Conversation avec " + c.name : "Bienvenue dans #" + c.name + " !"));
-      w.appendChild(el("p", "", c.kind === "dm" ? "C'est le début de votre conversation privée. Seuls vous deux pouvez la lire." : c.topic || "C'est le début du salon.")); box.appendChild(w);
+      w.appendChild(el("h3", "", c.group ? "Groupe « " + c.name + " »" : c.kind === "dm" ? "Conversation avec " + c.name : "Bienvenue dans #" + c.name + " !"));
+      w.appendChild(el("p", "", c.group ? "C'est le début du groupe. Seuls ses membres peuvent lire ces messages." : c.kind === "dm" ? "C'est le début de votre conversation privée. Seuls vous deux pouvez la lire." : c.topic || "C'est le début du salon.")); box.appendChild(w);
     }
     let prev = null, hid = [];
     const flush = () => { if (!hid.length) return; const ids = hid.map((x) => x.id), n = hid.length, who = hid[0].user.name; hid = [];
@@ -1386,7 +1463,7 @@
   function renderVoicePanel() {
     const p = $("vpanel"); p.hidden = !V.cid; if (!V.cid) return;
     const s = S.servers.find((x) => x.id === V.sid), c = s && s.channels.find((x) => x.id === V.cid), dmc = V.dm ? dmOf(V.cid) : null;
-    $("vName").textContent = dmc ? "Appel avec " + dmc.other.name : c ? c.name + " · " + s.name : "";
+    $("vName").textContent = dmc ? (dmc.group ? "Appel de groupe · " : "Appel avec ") + dmc.other.name : c ? c.name + " · " + s.name : "";
     const peers = [...V.peers.values()], st = peers.some((x) => x.state === "failed") ? "failed" : !peers.length || peers.every((x) => x.state === "connected") ? "connected" : "connecting";
     p.dataset.state = st; $("vState").textContent = st === "failed" ? "Connexion impossible" : V.dm && !peers.length ? "Ça sonne…" : st === "connecting" ? "Connexion…" : V.dm ? "Appel en cours" : "Vocal connecté";
     const sh = $("vShare"); sh.hidden = !(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) && !(window.cordialDesktop && window.cordialDesktop.screenSources);
@@ -1408,6 +1485,7 @@
     if (show) $("callBarTxt").textContent = "📞 Appel en cours avec " + dm.voice.map((u) => u.name).join(", ");
   }
   $("callBarJoin").onclick = () => { const c = channel(); if (c) joinVoice(c); };
+  $("bGroup").onclick = () => groupSettingsModal();
   $("bCall").onclick = () => startCall(false); $("bVideo").onclick = () => startCall(true);
   let ringCtx = null, ringTimer = null;
   function ringStart() {
@@ -1425,7 +1503,7 @@
   function showIncomingCall(d) {
     if (isBlockedId(d.from.id)) return;
     dismissCall(); const box = el("div", "incall"); box.id = "incall"; box.dataset.cid = d.channelId; box.setAttribute("role", "alertdialog"); box.setAttribute("aria-label", "Appel entrant");
-    box.appendChild(avatar(d.from, "on")); const t = el("div", "inctx"); t.appendChild(el("b", "", d.from.name)); t.appendChild(el("small", "", V.cid ? "Appel entrant (vous êtes déjà en vocal)" : "Appel entrant…")); box.appendChild(t);
+    box.appendChild(avatar(d.from, "on")); const t = el("div", "inctx"); t.appendChild(el("b", "", d.from.name)); t.appendChild(el("small", "", (d.group ? "Appel du groupe « " + d.group + " »" : "Appel entrant") + (V.cid ? " (vous êtes déjà en vocal)" : "…"))); box.appendChild(t);
     const ok = el("button", "icn ok"); ok.type = "button"; ok.title = "Répondre"; ok.setAttribute("aria-label", "Répondre"); ok.innerHTML = ic("phone", 20);
     const no = el("button", "icn danger"); no.type = "button"; no.title = "Refuser"; no.setAttribute("aria-label", "Refuser"); no.innerHTML = ic("phone-off", 20);
     ok.onclick = () => { dismissCall(d.channelId); if (!dmOf(d.channelId)) S.dms.push({ id: d.channelId, other: d.from }); go("dm", null, d.channelId); const c = dmOf(d.channelId); if (c) joinVoice({ id: d.channelId, name: d.from.name, kind: "dm" }); };

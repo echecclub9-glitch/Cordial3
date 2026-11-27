@@ -308,6 +308,8 @@ label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .04em
 @keyframes ringpulse { 50% { box-shadow: 0 12px 40px rgba(0,0,0,.5), 0 0 0 6px color-mix(in srgb, var(--ok) 35%, transparent); } }
 .mutuals { display: flex; flex-wrap: wrap; gap: 6px; } .mutual { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 4px; border-radius: 14px; background: var(--hover); font-size: 13px; } .mutual .av, .mutual .avatar { width: 20px; height: 20px; }
 .mico { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; } .mico img { width: 100%; height: 100%; object-fit: cover; }
+.dmname { display: flex; flex-direction: column; min-width: 0; text-align: left; } .dmname small { font-size: 11px; color: var(--muted); }
+.pickrow { cursor: pointer; } .pickrow input[type=checkbox] { width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
 .catrow { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line, rgba(128,128,128,.25)); }
 .catrow input { flex: 1; min-width: 0; } .catname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .catn { font-size: 12px; opacity: .7; white-space: nowrap; } .catadd { display: flex; gap: 8px; margin: 12px 0; } .catadd .field { flex: 1; min-width: 0; width: auto; } .catadd .btn { width: auto; padding: 0 18px; margin: 0; } .cathead .field { padding: 6px 8px; width: auto; }

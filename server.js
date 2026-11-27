@@ -149,6 +149,7 @@ for (const sql of [
   "ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''", "ALTER TABLE users ADD COLUMN custom TEXT NOT NULL DEFAULT ''",
   "ALTER TABLE files ADD COLUMN purpose TEXT",
   "ALTER TABLE channels ADD COLUMN private INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE channels ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0", "ALTER TABLE channels ADD COLUMN owner INTEGER", "ALTER TABLE channels ADD COLUMN icon TEXT",
 ]) { try { db.exec(sql); } catch (e) { /* colonne déjà présente */ } }
 db.prepare("UPDATE users SET role = 'admin' WHERE lower(name) IN (" + ADMIN_NAMES.map(() => "?").join(",") + ")").run(...ADMIN_NAMES);
 
@@ -218,10 +219,14 @@ const q = {
   attachFile: db.prepare("UPDATE files SET message_id = ? WHERE id = ?"),
   dmUsers: db.prepare("SELECT user_id FROM dm_members WHERE channel_id = ?"),
   isDmMember: db.prepare("SELECT 1 AS ok FROM dm_members WHERE channel_id = ? AND user_id = ?"),
-  findDm: db.prepare("SELECT c.id FROM channels c JOIN dm_members a ON a.channel_id = c.id AND a.user_id = ? JOIN dm_members b ON b.channel_id = c.id AND b.user_id = ? WHERE c.kind = 'dm'"),
+  findDm: db.prepare("SELECT c.id FROM channels c JOIN dm_members a ON a.channel_id = c.id AND a.user_id = ? JOIN dm_members b ON b.channel_id = c.id AND b.user_id = ? WHERE c.kind = 'dm' AND c.is_group = 0"),
+  groupsOf: db.prepare("SELECT c.* FROM dm_members m JOIN channels c ON c.id = m.channel_id AND c.kind = 'dm' AND c.is_group = 1 WHERE m.user_id = ? ORDER BY c.id"),
+  shareDm: db.prepare("SELECT 1 AS ok FROM dm_members a JOIN dm_members b ON b.channel_id = a.channel_id AND b.user_id = ? WHERE a.user_id = ? LIMIT 1"),
+  coDmUsers: db.prepare("SELECT DISTINCT om.user_id FROM dm_members me JOIN dm_members om ON om.channel_id = me.channel_id AND om.user_id != me.user_id WHERE me.user_id = ?"),
+  delDmMember: db.prepare("DELETE FROM dm_members WHERE channel_id = ? AND user_id = ?"),
   insDmMember: db.prepare("INSERT INTO dm_members (channel_id, user_id) VALUES (?, ?)"),
   dmsOf: db.prepare(`SELECT c.id, o.id AS oid, o.name, o.color, o.role, o.status, o.avatar, o.custom FROM dm_members me
-    JOIN channels c ON c.id = me.channel_id AND c.kind = 'dm' JOIN dm_members om ON om.channel_id = c.id AND om.user_id != me.user_id
+    JOIN channels c ON c.id = me.channel_id AND c.kind = 'dm' AND c.is_group = 0 JOIN dm_members om ON om.channel_id = c.id AND om.user_id != me.user_id
     JOIN users o ON o.id = om.user_id WHERE me.user_id = ? ORDER BY c.id`),
   shareServer: db.prepare("SELECT 1 AS ok FROM members x JOIN members y ON y.server_id = x.server_id AND y.user_id = ? WHERE x.user_id = ? LIMIT 1"),
   insReport: db.prepare("INSERT INTO reports (message_id, reporter_id, author_id, author_name, text, place, reason, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
@@ -490,6 +495,31 @@ app.delete("/api/servers/:id/image", (req, res) => {
   setServerImage(t.s, t.kind, null, t.user.id); res.json({ ok: true });
 });
 
+app.post("/api/groups/:id/icon", express.raw({ type: () => true, limit: SRV_IMG.icon }), (req, res) => {
+  const user = authBearer(req); if (!user) return res.status(401).json({ error: "Connexion requise." });
+  const c = q.channel.get(Number(req.params.id));
+  if (!c || c.kind !== "dm" || !c.is_group || !q.isDmMember.get(c.id, user.id)) return res.status(404).json({ error: "Groupe introuvable." });
+  if (c.owner !== user.id) return res.status(403).json({ error: "Seul le créateur du groupe peut changer l'icône." });
+  if (hit(profileHits, user.id, 60000, 12)) return res.status(429).json({ error: "Trop de changements, patientez un instant." });
+  const buf = req.body;
+  if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: "Image vide." });
+  if (buf.length > SRV_IMG.icon) return res.status(413).json({ error: "Image trop lourde (1 Mo maximum)." });
+  const ext = IMG_EXT.find((e) => FILE_TYPES[e].ok(buf)); if (!ext) return res.status(415).json({ error: "Format non accepté (PNG, JPG, GIF ou WebP)." });
+  const id = crypto.randomBytes(16).toString("hex");
+  fs.writeFileSync(path.join(UPLOAD_DIR, id), buf);
+  db.prepare("INSERT INTO files (id, user_id, name, mime, size, ts, purpose) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, user.id, "grpicon." + ext, FILE_TYPES[ext].mime, buf.length, Date.now(), "grpicon");
+  db.prepare("UPDATE channels SET icon = ? WHERE id = ?").run(id, c.id); dropProfileImage(c.icon);
+  io.to(q.dmUsers.all(c.id).map((r) => "user:" + r.user_id)).emit("groupUpdated", groupView(q.channel.get(c.id)));
+  res.json({ ok: true });
+});
+app.delete("/api/groups/:id/icon", (req, res) => {
+  const user = authBearer(req); if (!user) return res.status(401).json({ error: "Connexion requise." });
+  const c = q.channel.get(Number(req.params.id));
+  if (!c || !c.is_group || c.owner !== user.id) return res.status(404).json({ error: "Groupe introuvable." });
+  db.prepare("UPDATE channels SET icon = NULL WHERE id = ?").run(c.id); dropProfileImage(c.icon);
+  io.to(q.dmUsers.all(c.id).map((r) => "user:" + r.user_id)).emit("groupUpdated", groupView(q.channel.get(c.id)));
+  res.json({ ok: true });
+});
 // L'identifiant (32 caractères aléatoires) sert de lien secret : il n'est connu que de ceux qui voient le message.
 app.get("/files/:id", (req, res) => {
   const f = /^[0-9a-f]{32}$/.test(req.params.id) && q.fileById.get(req.params.id);
@@ -582,6 +612,18 @@ const lastSent = new Map(); // "userId:channelId" -> horodatage du dernier messa
 
 const isOnline = (id) => online.has(id);
 const isStaff = (u) => u.role === "admin" || u.role === "mod";
+/* --- Groupes de messages privés --- */
+const GROUP_MAX = 10;
+function groupView(c) {
+  return { id: c.id, group: true, owner: c.owner, other: { id: 0, name: c.name, color: "#5865f2", role: "user", avatar: c.icon || null, custom: "", status: "on", group: true },
+    members: q.dmUsers.all(c.id).map((r) => friendPub(r.user_id)).filter(Boolean) };
+}
+const groupMemberIds = (cid) => q.dmUsers.all(cid).map((r) => r.user_id);
+function destroyGroup(c) {
+  db.prepare("SELECT id FROM messages WHERE channel_id = ?").all(c.id).forEach((m) => removeFiles(m.id));
+  voiceRooms.delete(c.id); io.in("voice:" + c.id).socketsLeave("voice:" + c.id);
+  q.delChannel.run(c.id); dropProfileImage(c.icon);
+}
 /* --- Amis et blocage --- */
 const pair = (x, y) => (x < y ? [x, y] : [y, x]);
 const friendRow = (x, y) => { const [a, b] = pair(x, y); return db.prepare("SELECT * FROM friends WHERE a = ? AND b = ?").get(a, b); };
@@ -644,6 +686,7 @@ function broadcastRoster(c) {
 }
 const callHits = new Map();
 const peerOfDm = (c, uid) => { const r = q.dmUsers.all(c.id).find((x) => x.user_id !== uid); return r ? r.user_id : null; };
+const MAX_DM_CALL = 6;
 const MAX_SCREENS = 2;
 const NUM = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"];
 function msgView(m) {
@@ -711,7 +754,7 @@ function fullProfile(u) {
 }
 // Prévient toutes les personnes qui voient cet utilisateur (serveurs communs, messages privés, lui-même)
 function broadcastProfile(u) {
-  const rooms = q.serversOf.all(u.id).map((s) => "srv:" + s.id).concat("user:" + u.id, q.dmsOf.all(u.id).map((d) => "user:" + d.oid));
+  const rooms = q.serversOf.all(u.id).map((s) => "srv:" + s.id).concat("user:" + u.id, q.coDmUsers.all(u.id).map((d) => "user:" + d.user_id));
   io.to(rooms).emit("profile", fullProfile(u));
 }
 function broadcastPresence(u) {
@@ -782,7 +825,7 @@ function pushForMessage(c, user, m, text) {
     if (notifMuted(id, c) && !text.toLowerCase().includes("@" + target.name.toLowerCase())) return;
     // Pas de notification si la personne regarde déjà l'application
     if (isOnline(id) && [...online.get(id).values()].some((s) => s.visible)) return;
-    sendPush(id, { title: c.kind === "dm" ? user.name : user.name + " · #" + c.name, body, tag: "ch" + c.id, url: "/app" });
+    sendPush(id, { title: c.is_group ? user.name + " · " + c.name : c.kind === "dm" ? user.name : user.name + " · #" + c.name, body, tag: "ch" + c.id, url: "/app" });
   });
 }
 
@@ -796,7 +839,7 @@ io.on("connection", (socket) => {
   if (isStaff(user)) socket.join("staff");
   const servers = q.serversOf.all(uid);
   servers.forEach((s) => socket.join("srv:" + s.id));
-  const dms = q.dmsOf.all(uid).map((d) => ({ id: d.id, other: { id: d.oid, name: d.name, color: d.color, role: d.role, avatar: d.avatar || null, custom: d.custom || "", status: shownStatus(d.oid ? { ...d, id: d.oid } : d) } }));
+  const dms = q.dmsOf.all(uid).map((d) => ({ id: d.id, other: { id: d.oid, name: d.name, color: d.color, role: d.role, avatar: d.avatar || null, custom: d.custom || "", status: shownStatus(d.oid ? { ...d, id: d.oid } : d) } })).concat(q.groupsOf.all(uid).map(groupView));
   socket.emit("ready", { me: { ...pub(user), status: user.status }, servers: servers.map((s) => serverView(s, user)), dms, ice: ICE, notifMutes: notifMutesOf(uid), social: socialOf(uid) });
   broadcastPresence(user);
 
@@ -840,7 +883,7 @@ io.on("connection", (socket) => {
     const c = canAccess(uid, channelId);
     if (!c) return ack({ error: "Accès refusé." });
     if (c.kind === "voice") return ack({ error: "Ce salon est un salon vocal." });
-    if (c.kind === "dm") {
+    if (c.kind === "dm" && !c.is_group) {
       const peer = q.dmUsers.all(c.id).map((r) => r.user_id).find((i) => i !== uid);
       if (peer && isBlocking(uid, peer)) return ack({ error: "Vous avez bloqué cette personne. Débloquez-la pour lui écrire." });
       if (peer && isBlocking(peer, uid)) return ack({ error: "Cette personne ne peut pas recevoir vos messages." });
@@ -987,7 +1030,7 @@ io.on("connection", (socket) => {
   socket.on("getProfile", guard(({ userId }, ack) => {
     const t = q.userById.get(Number(userId));
     if (!t || t.banned) return ack({ error: "Profil introuvable." });
-    const allowed = t.id === uid || isStaff(cur()) || t.role === "bot" || q.shareServer.get(uid, t.id) || q.findDm.get(uid, t.id) || friendRow(uid, t.id);
+    const allowed = t.id === uid || isStaff(cur()) || t.role === "bot" || q.shareServer.get(uid, t.id) || q.shareDm.get(uid, t.id) || friendRow(uid, t.id);
     if (!allowed) return ack({ error: "Profil introuvable." });
     const out = fullProfile(t);
     if (t.id !== uid && t.role !== "bot") {
@@ -1048,6 +1091,58 @@ io.on("connection", (socket) => {
   socket.on("unblock", guard((p, ack) => {
     const t = p && p.userId != null ? q.userById.get(Number(p.userId)) : null; if (!t) return ack({ error: "Utilisateur introuvable." });
     db.prepare("DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?").run(uid, t.id); pushSocial(uid); ack({ ok: true });
+  }));
+  /* --- Groupes de messages privés --- */
+  const gAuth = (channelId, ownerOnly) => {
+    const c = canAccess(uid, Number(channelId));
+    if (!c || c.kind !== "dm" || !c.is_group) return null;
+    if (ownerOnly && c.owner !== uid) return null;
+    return c;
+  };
+  const gPush = (c, extra) => { const v = groupView(q.channel.get(c.id)); io.to(groupMemberIds(c.id).map((i) => "user:" + i)).emit("groupUpdated", v); return v; };
+  // Les amis qu'on peut ajouter : ami de la personne qui ajoute, et pas de blocage entre eux
+  const addable = (ids, me, already) => [...new Set((Array.isArray(ids) ? ids : []).map(Number))].filter((i) => i && i !== me && !already.includes(i) && areFriends(me, i) && !blockedEither(me, i) && (q.userById.get(i) || {}).role !== "bot");
+  socket.on("createGroup", guard(({ name, userIds }, ack) => {
+    if (hit(friendHits, uid, 60000, 20)) return ack({ error: "Trop de créations, patientez un instant." });
+    const ids = addable(userIds, uid, []);
+    if (ids.length < 2) return ack({ error: "Choisissez au moins deux amis (vous n'ajoutez que vos amis)." });
+    if (ids.length + 1 > GROUP_MAX) return ack({ error: "Un groupe réunit " + GROUP_MAX + " personnes maximum." });
+    const names = ids.map((i) => q.userById.get(i).name), gname = clean(name, 40) || [cur().name, ...names].join(", ").slice(0, 40);
+    const cid = tx(() => {
+      const id = Number(q.insChannel.run(DM_SERVER, gname, "", "dm", "dm").lastInsertRowid);
+      db.prepare("UPDATE channels SET is_group = 1, owner = ? WHERE id = ?").run(uid, id);
+      [uid, ...ids].forEach((i) => q.insDmMember.run(id, i)); return id;
+    });
+    const view = groupView(q.channel.get(cid));
+    ids.forEach((i) => io.to("user:" + i).emit("dmOpened", view));
+    ack({ ok: true, dm: view });
+  }));
+  socket.on("groupRename", guard(({ channelId, name }, ack) => {
+    const c = gAuth(channelId, true); if (!c) return ack({ error: "Seul le créateur du groupe peut le modifier." });
+    const n = clean(name, 40); if (!n) return ack({ error: "Donnez un nom au groupe." });
+    db.prepare("UPDATE channels SET name = ? WHERE id = ?").run(n, c.id); gPush(c); ack({ ok: true });
+  }));
+  socket.on("groupAdd", guard(({ channelId, userIds }, ack) => {
+    const c = gAuth(channelId, true); if (!c) return ack({ error: "Seul le créateur du groupe peut ajouter des membres." });
+    const have = groupMemberIds(c.id), ids = addable(userIds, uid, have);
+    if (!ids.length) return ack({ error: "Personne à ajouter (seuls vos amis peuvent l'être)." });
+    if (have.length + ids.length > GROUP_MAX) return ack({ error: "Un groupe réunit " + GROUP_MAX + " personnes maximum." });
+    ids.forEach((i) => q.insDmMember.run(c.id, i));
+    const v = gPush(c); ids.forEach((i) => io.to("user:" + i).emit("dmOpened", v)); ack({ ok: true });
+  }));
+  socket.on("groupRemove", guard(({ channelId, userId }, ack) => {
+    const c = gAuth(channelId, true); if (!c) return ack({ error: "Seul le créateur du groupe peut retirer des membres." });
+    const t = Number(userId); if (t === uid) return ack({ error: "Utilisez « Quitter le groupe »." });
+    if (!groupMemberIds(c.id).includes(t)) return ack({ error: "Membre introuvable." });
+    q.delDmMember.run(c.id, t); io.to("user:" + t).emit("groupLeft", { channelId: c.id, removed: true, name: c.name }); gPush(c); ack({ ok: true });
+  }));
+  socket.on("groupLeave", guard(({ channelId }, ack) => {
+    const c = gAuth(channelId, false); if (!c) return ack({ error: "Groupe introuvable." });
+    q.delDmMember.run(c.id, uid);
+    const rest = groupMemberIds(c.id);
+    if (!rest.length) destroyGroup(c);
+    else { if (c.owner === uid) db.prepare("UPDATE channels SET owner = ? WHERE id = ?").run(rest[0], c.id); gPush(c); }
+    socket.emit("groupLeft", { channelId: c.id }); ack({ ok: true });
   }));
   socket.on("openDm", guard(({ userId }, ack) => {
     const other = q.userById.get(Number(userId));
@@ -1453,8 +1548,8 @@ io.on("connection", (socket) => {
     user = cur();
     const c = canAccess(uid, channelId);
     if (!c || (c.kind !== "voice" && c.kind !== "dm")) return ack({ error: "Salon vocal introuvable." });
-    const isDm = c.kind === "dm", peerId = isDm ? peerOfDm(c, uid) : null;
-    if (isDm) {
+    const isDm = c.kind === "dm", isGroup = isDm && !!c.is_group, peerId = isDm && !isGroup ? peerOfDm(c, uid) : null;
+    if (isDm && !isGroup) {
       const other = peerId && q.userById.get(peerId);
       if (!other || other.banned || other.role === "bot") return ack({ error: "Cette personne est introuvable." });
       if (isBlocking(uid, peerId)) return ack({ error: "Vous avez bloqué cette personne. Débloquez-la pour l'appeler." });
@@ -1463,7 +1558,7 @@ io.on("connection", (socket) => {
     if (voiceChan === c.id) return ack({ error: "Vous êtes déjà dans ce salon." });
     leaveVoice();
     const room = voiceRooms.get(c.id) || new Map();
-    if (room.size >= (isDm ? 2 : MAX_VOICE)) return ack({ error: isDm ? "Vous êtes déjà en appel sur un autre appareil." : "Salon vocal plein (" + MAX_VOICE + " personnes maximum)." });
+    if (room.size >= (isDm && !isGroup ? 2 : MAX_VOICE)) return ack({ error: isDm && !isGroup ? "Vous êtes déjà en appel sur un autre appareil." : (isDm ? "Appel complet (" : "Salon vocal plein (") + MAX_VOICE + " personnes maximum)." });
     const firstIn = isDm && !room.size;
     if (firstIn && hit(callHits, uid, 60000, 6)) return ack({ error: "Trop d'appels, patientez un instant." });
     const peers = [...room.entries()].map(([sid, p]) => ({ socketId: sid, user: p.user, muted: p.muted, screen: !!p.screen, cam: !!p.cam, screenId: p.screenId || null, camId: p.camId || null }));
@@ -1474,17 +1569,23 @@ io.on("connection", (socket) => {
     if (isDm) {
       if (firstIn) {
         // Fait sonner la personne appelée, sauf si elle est en « Ne pas déranger »
-        const target = q.userById.get(peerId);
-        if (target && target.status !== "dnd") {
-          io.to("user:" + peerId).emit("callIncoming", { channelId: c.id, from: pub(user) });
-          if (!isOnline(peerId) || ![...online.get(peerId).values()].some((s) => s.visible)) sendPush(peerId, { title: "Appel de " + user.name, body: "Touchez pour répondre", tag: "call" + c.id, url: "/app" });
-        }
-      } else { room.answered = true; io.to(roomsOf(c)).emit("callDismiss", { channelId: c.id, answered: true, by: uid }); }
+        (isGroup ? groupMemberIds(c.id).filter((i) => i !== uid && !blockedEither(i, uid)) : [peerId]).forEach((tid) => {
+          const target = q.userById.get(tid);
+          if (!target || target.banned || target.status === "dnd") return;
+          io.to("user:" + tid).emit("callIncoming", { channelId: c.id, from: pub(user), group: isGroup ? c.name : undefined });
+          if (!isOnline(tid) || ![...online.get(tid).values()].some((s) => s.visible)) sendPush(tid, { title: "Appel de " + user.name + (isGroup ? " · " + c.name : ""), body: "Touchez pour répondre", tag: "call" + c.id, url: "/app" });
+        });
+      } else {
+        room.answered = true;
+        // Appel à deux : la sonnerie s'arrête partout. Groupe : seules les autres sessions de la personne qui répond ; les autres membres peuvent encore rejoindre.
+        io.to(isGroup ? "user:" + uid : roomsOf(c)).emit("callDismiss", { channelId: c.id, answered: true, by: uid });
+      }
     }
     ack({ ok: true, peers, ice: ICE });
   }));
   socket.on("callDecline", guard(({ channelId }) => {
     const c = canAccess(uid, channelId); if (!c || c.kind !== "dm") return;
+    if (c.is_group) return io.to("user:" + uid).emit("callDismiss", { channelId: c.id, declined: true });
     const peerId = peerOfDm(c, uid); if (!peerId) return;
     io.to("user:" + peerId).emit("callDeclined", { channelId: c.id, by: cur().name });
     io.to("user:" + uid).emit("callDismiss", { channelId: c.id, declined: true });
