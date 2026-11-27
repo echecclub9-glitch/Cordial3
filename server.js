@@ -640,8 +640,10 @@ function rosterOf(channelId) {
   return room ? [...room.values()].map((p) => ({ ...p.user, muted: p.muted, screen: !!p.screen, cam: !!p.cam })) : [];
 }
 function broadcastRoster(c) {
-  io.to(roomsOf(c)).emit("voiceRoster", { serverId: c.server_id, channelId: c.id, users: rosterOf(c.id) });
+  io.to(roomsOf(c)).emit("voiceRoster", { serverId: c.server_id, channelId: c.id, users: rosterOf(c.id), dm: c.kind === "dm" });
 }
+const callHits = new Map();
+const peerOfDm = (c, uid) => { const r = q.dmUsers.all(c.id).find((x) => x.user_id !== uid); return r ? r.user_id : null; };
 const MAX_SCREENS = 2;
 const NUM = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"];
 function msgView(m) {
@@ -987,7 +989,13 @@ io.on("connection", (socket) => {
     if (!t || t.banned) return ack({ error: "Profil introuvable." });
     const allowed = t.id === uid || isStaff(cur()) || t.role === "bot" || q.shareServer.get(uid, t.id) || q.findDm.get(uid, t.id) || friendRow(uid, t.id);
     if (!allowed) return ack({ error: "Profil introuvable." });
-    ack({ profile: fullProfile(t) });
+    const out = fullProfile(t);
+    if (t.id !== uid && t.role !== "bot") {
+      out.mutualServers = db.prepare("SELECT s.id, s.name, s.abbr, s.icon FROM servers s JOIN members x ON x.server_id = s.id AND x.user_id = ? JOIN members y ON y.server_id = s.id AND y.user_id = ? WHERE s.id != ? ORDER BY s.name COLLATE NOCASE").all(uid, t.id, DM_SERVER);
+      const mine = new Set(socialOf(uid).friends.map((f) => f.id));
+      out.mutualFriends = socialOf(t.id).friends.filter((f) => mine.has(f.id));
+    }
+    ack({ profile: out });
   }));
 
   /* --- Messages privés --- */
@@ -1435,23 +1443,51 @@ io.on("connection", (socket) => {
     socket.leave("voice:" + cid);
     if (room) { room.delete(socket.id); if (!room.size) voiceRooms.delete(cid); }
     socket.to("voice:" + cid).emit("voicePeerLeft", { channelId: cid, socketId: socket.id });
-    const c = q.channel.get(cid); if (c) broadcastRoster(c);
+    const c = q.channel.get(cid); if (c) {
+      broadcastRoster(c);
+      // Appel privé : si plus personne n'est dedans, l'appel (ou la sonnerie) se termine pour les deux
+      if (c.kind === "dm" && !voiceRooms.has(cid)) io.to(roomsOf(c)).emit("callDismiss", { channelId: cid, missed: !(room && room.answered), from: uid });
+    }
   }
   socket.on("voiceJoin", guard(({ channelId }, ack) => {
     user = cur();
     const c = canAccess(uid, channelId);
-    if (!c || c.kind !== "voice") return ack({ error: "Salon vocal introuvable." });
-    if (activeMute(c.server_id, uid)) return ack({ error: "Vous êtes en sourdine : le vocal est indisponible." });
+    if (!c || (c.kind !== "voice" && c.kind !== "dm")) return ack({ error: "Salon vocal introuvable." });
+    const isDm = c.kind === "dm", peerId = isDm ? peerOfDm(c, uid) : null;
+    if (isDm) {
+      const other = peerId && q.userById.get(peerId);
+      if (!other || other.banned || other.role === "bot") return ack({ error: "Cette personne est introuvable." });
+      if (isBlocking(uid, peerId)) return ack({ error: "Vous avez bloqué cette personne. Débloquez-la pour l'appeler." });
+      if (isBlocking(peerId, uid)) return ack({ error: "Cette personne ne peut pas recevoir vos appels." });
+    } else if (activeMute(c.server_id, uid)) return ack({ error: "Vous êtes en sourdine : le vocal est indisponible." });
     if (voiceChan === c.id) return ack({ error: "Vous êtes déjà dans ce salon." });
     leaveVoice();
     const room = voiceRooms.get(c.id) || new Map();
-    if (room.size >= MAX_VOICE) return ack({ error: "Salon vocal plein (" + MAX_VOICE + " personnes maximum)." });
+    if (room.size >= (isDm ? 2 : MAX_VOICE)) return ack({ error: isDm ? "Vous êtes déjà en appel sur un autre appareil." : "Salon vocal plein (" + MAX_VOICE + " personnes maximum)." });
+    const firstIn = isDm && !room.size;
+    if (firstIn && hit(callHits, uid, 60000, 6)) return ack({ error: "Trop d'appels, patientez un instant." });
     const peers = [...room.entries()].map(([sid, p]) => ({ socketId: sid, user: p.user, muted: p.muted, screen: !!p.screen, cam: !!p.cam, screenId: p.screenId || null, camId: p.camId || null }));
     room.set(socket.id, { user: pub(user), muted: false, screen: false, cam: false, screenId: null, camId: null }); voiceRooms.set(c.id, room); voiceChan = c.id;
     socket.join("voice:" + c.id);
     socket.to("voice:" + c.id).emit("voicePeerJoined", { channelId: c.id, socketId: socket.id, user: pub(user) });
     broadcastRoster(c);
+    if (isDm) {
+      if (firstIn) {
+        // Fait sonner la personne appelée, sauf si elle est en « Ne pas déranger »
+        const target = q.userById.get(peerId);
+        if (target && target.status !== "dnd") {
+          io.to("user:" + peerId).emit("callIncoming", { channelId: c.id, from: pub(user) });
+          if (!isOnline(peerId) || ![...online.get(peerId).values()].some((s) => s.visible)) sendPush(peerId, { title: "Appel de " + user.name, body: "Touchez pour répondre", tag: "call" + c.id, url: "/app" });
+        }
+      } else { room.answered = true; io.to(roomsOf(c)).emit("callDismiss", { channelId: c.id, answered: true, by: uid }); }
+    }
     ack({ ok: true, peers, ice: ICE });
+  }));
+  socket.on("callDecline", guard(({ channelId }) => {
+    const c = canAccess(uid, channelId); if (!c || c.kind !== "dm") return;
+    const peerId = peerOfDm(c, uid); if (!peerId) return;
+    io.to("user:" + peerId).emit("callDeclined", { channelId: c.id, by: cur().name });
+    io.to("user:" + uid).emit("callDismiss", { channelId: c.id, declined: true });
   }));
   socket.on("voiceSignal", guard(({ to, data }) => {
     const room = voiceChan && voiceRooms.get(voiceChan);

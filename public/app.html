@@ -71,11 +71,14 @@
       <button class="tbtn" id="bNav" aria-label="Ouvrir les salons"><i data-ic="menu"></i></button>
       <span class="t" id="tName"></span><span class="d" id="tTopic"></span><span class="sp"></span>
       <button class="tbtn show" id="bMute" hidden><i data-ic="bell"></i></button>
+      <button class="tbtn show" id="bCall" title="Appel vocal" aria-label="Appel vocal" hidden><i data-ic="phone"></i></button>
+      <button class="tbtn show" id="bVideo" title="Appel vidéo" aria-label="Appel vidéo" hidden><i data-ic="video"></i></button>
       <button class="tbtn show" id="bSearch" title="Rechercher" aria-label="Rechercher dans ce salon"><i data-ic="search"></i></button>
       <button class="tbtn show" id="bPins" title="Messages épinglés" aria-label="Messages épinglés"><i data-ic="pin"></i></button>
       <button class="tbtn" id="bMem" aria-label="Afficher les membres"><i data-ic="users"></i></button>
     </header>
     <div class="banner" id="banner" hidden>Connexion perdue, reconnexion…</div>
+    <div class="callbar" id="callBar" hidden><span id="callBarTxt"></span><button class="btn sm" id="callBarJoin" type="button">Rejoindre l'appel</button></div>
     <div class="announce" id="announce" role="status" title="Cliquer pour masquer" hidden></div>
     <section class="stage" id="stage" hidden aria-label="Écrans partagés"></section>
     <section class="panel" id="panel" hidden aria-label="Recherche et épingles">

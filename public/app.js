@@ -145,9 +145,17 @@
       $("typing").textContent = d.name + " est en train d'écrire…";
       clearTimeout(S.typingTimer); S.typingTimer = setTimeout(() => { $("typing").textContent = ""; }, 3000);
     });
-    sock.on("voiceRoster", (d) => { const s = S.servers.find((x) => x.id === d.serverId), c = s && s.channels.find((x) => x.id === d.channelId); if (c) { c.voice = d.users; renderSide(); } });
+    sock.on("voiceRoster", (d) => {
+      if (d.dm) { const dm = dmOf(d.channelId); if (dm) { dm.voice = d.users; renderCallBar(); renderVoicePanel(); } return; }
+      const s = S.servers.find((x) => x.id === d.serverId), c = s && s.channels.find((x) => x.id === d.channelId); if (c) { c.voice = d.users; renderSide(); } });
+    sock.on("callIncoming", showIncomingCall);
+    sock.on("callDismiss", (d) => {
+      const wasRinging = dismissCall(d.channelId);
+      if (wasRinging && d.missed && d.from !== S.me.id) toast("Appel manqué.");
+    });
+    sock.on("callDeclined", (d) => { if (V.cid === d.channelId && !V.peers.size) { leaveVoice(); toast(d.by + " a refusé l'appel."); } else if (V.joining === d.channelId) V.declined = d; });
     sock.on("voicePeerJoined", (d) => { if (V.cid === d.channelId && V.stream) makePeer(d.socketId, d.user, false); });
-    sock.on("voicePeerLeft", (d) => dropPeer(d.socketId));
+    sock.on("voicePeerLeft", (d) => { dropPeer(d.socketId); if (V.dm && V.cid === d.channelId && !V.peers.size) { leaveVoice(); toast("Appel terminé."); } });
     sock.on("voicePeerState", (d) => onPeerVideo(d.socketId, d));
     sock.on("voiceSignal", onSignal);
     sock.on("voiceEnded", (d) => { if (V.cid === d.channelId) { leaveVoice(true); toast("Le salon vocal a été supprimé."); } });
@@ -446,6 +454,7 @@
     $("tName").textContent = c ? (c.kind === "dm" ? "@ " : "# ") + c.name : "";
     $("tTopic").textContent = c ? c.topic : "";
     $("bSearch").hidden = $("bPins").hidden = !c;
+    { const o = c && c.kind === "dm" ? dmPeer(c) : null, ok = !!o && o.role !== "bot" && !isBlockedId(o.id); $("bCall").hidden = $("bVideo").hidden = !ok; renderCallBar(); }
     updateComposer();
   }
   function updateComposer() {
@@ -1237,6 +1246,16 @@
       if (p.custom) body.appendChild(el("div", "pcustom", p.custom));
       if (p.bio) { body.appendChild(el("h3", "", "À propos")); body.appendChild(el("p", "pbio", p.bio)); }
       body.appendChild(el("h3", "", "Membre depuis")); body.appendChild(el("p", "", DATE(p.created)));
+      if (p.mutualServers && p.mutualServers.length) {
+        body.appendChild(el("h3", "", "Serveurs en commun · " + p.mutualServers.length)); const w = el("div", "mutuals");
+        p.mutualServers.forEach((sv) => { const c = el("span", "mutual"); const ico = el("span", "mico"); if (sv.icon) { const im = el("img"); im.src = sv.icon; im.alt = ""; ico.appendChild(im); } else ico.textContent = (sv.abbr || sv.name).slice(0, 2); c.appendChild(ico); c.appendChild(el("span", "", sv.name)); w.appendChild(c); });
+        body.appendChild(w);
+      }
+      if (p.mutualFriends && p.mutualFriends.length) {
+        body.appendChild(el("h3", "", "Amis en commun · " + p.mutualFriends.length)); const w = el("div", "mutuals");
+        p.mutualFriends.forEach((f) => { const c = el("span", "mutual"); c.appendChild(avatar(f)); c.appendChild(el("span", "", f.name)); w.appendChild(c); });
+        body.appendChild(w);
+      }
       const close = overlay(card);
       if (p.id === S.me.id) { const b = el("button", "btn", "Modifier mon profil"); b.type = "button"; b.onclick = () => { close(); editProfile(); }; body.appendChild(b); }
       else if (p.role !== "bot") { const b = icText(el("button", "btn"), "message", "Envoyer un message"); b.type = "button"; b.onclick = () => { close(); openDm(p.id); }; body.appendChild(b); }
@@ -1366,27 +1385,71 @@
   /* ---------- Vocal (WebRTC) ---------- */
   function renderVoicePanel() {
     const p = $("vpanel"); p.hidden = !V.cid; if (!V.cid) return;
-    const s = S.servers.find((x) => x.id === V.sid), c = s && s.channels.find((x) => x.id === V.cid);
-    $("vName").textContent = c ? c.name + " · " + s.name : "";
+    const s = S.servers.find((x) => x.id === V.sid), c = s && s.channels.find((x) => x.id === V.cid), dmc = V.dm ? dmOf(V.cid) : null;
+    $("vName").textContent = dmc ? "Appel avec " + dmc.other.name : c ? c.name + " · " + s.name : "";
     const peers = [...V.peers.values()], st = peers.some((x) => x.state === "failed") ? "failed" : !peers.length || peers.every((x) => x.state === "connected") ? "connected" : "connecting";
-    p.dataset.state = st; $("vState").textContent = st === "failed" ? "Connexion impossible" : st === "connecting" ? "Connexion…" : "Vocal connecté";
+    p.dataset.state = st; $("vState").textContent = st === "failed" ? "Connexion impossible" : V.dm && !peers.length ? "Ça sonne…" : st === "connecting" ? "Connexion…" : V.dm ? "Appel en cours" : "Vocal connecté";
     const sh = $("vShare"); sh.hidden = !(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) && !(window.cordialDesktop && window.cordialDesktop.screenSources);
     sh.innerHTML = ic(V.screen ? "screen-off" : "screen-share"); sh.classList.toggle("on", !!V.screen);
     const cb = $("vCam"); cb.hidden = !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); cb.innerHTML = ic(V.cam ? "video-off" : "video"); cb.classList.toggle("on", !!V.cam); cb.title = cb.ariaLabel = V.cam ? "Couper la caméra" : "Activer la caméra"; sh.title = sh.ariaLabel = V.screen ? "Arrêter le partage d'écran" : "Partager l'écran";
     const mb = $("vMute"); mb.innerHTML = ic(V.muted ? "mic-off" : "mic"); mb.classList.toggle("off", V.muted); mb.title = mb.ariaLabel = V.muted ? "Réactiver le micro" : "Couper le micro";
   }
-  async function joinVoice(c) {
+  /* ---------- Appels privés (vocal et vidéo entre deux personnes, sur la base du vocal des serveurs) ---------- */
+  const dmPeer = (c) => { const d = c && dmOf(c.id); return d ? d.other : null; };
+  function startCall(video) {
+    const c = channel(); if (!c || c.kind !== "dm") return;
+    const o = dmPeer(c); if (!o || o.role === "bot") return;
+    if (V.cid === c.id) { if (video) startCam(); return; }
+    joinVoice(c, () => { V.ringing = Date.now(); clearTimeout(V.ringT); V.ringT = setTimeout(() => { if (V.cid === c.id && !V.peers.size) { leaveVoice(); toast("Pas de réponse."); } }, 45000); if (video) startCam(); });
+  }
+  function renderCallBar() {
+    const bar = $("callBar"), c = channel(), dm = c && c.kind === "dm" ? dmOf(c.id) : null, n = dm && dm.voice ? dm.voice.length : 0;
+    const show = !!dm && n > 0 && V.cid !== c.id; bar.hidden = !show;
+    if (show) $("callBarTxt").textContent = "📞 Appel en cours avec " + dm.voice.map((u) => u.name).join(", ");
+  }
+  $("callBarJoin").onclick = () => { const c = channel(); if (c) joinVoice(c); };
+  $("bCall").onclick = () => startCall(false); $("bVideo").onclick = () => startCall(true);
+  let ringCtx = null, ringTimer = null;
+  function ringStart() {
+    ringStop();
+    try {
+      ringCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const beep = () => { if (!ringCtx) return; [0, 0.35].forEach((t) => { const o = ringCtx.createOscillator(), g = ringCtx.createGain(); o.frequency.value = 440 + (t ? 80 : 0); g.gain.value = 0.08; o.connect(g); g.connect(ringCtx.destination); o.start(ringCtx.currentTime + t); o.stop(ringCtx.currentTime + t + 0.25); }); };
+      beep(); ringTimer = setInterval(beep, 2000);
+    } catch (e) { /* pas de son possible : l'alerte visuelle suffit */ }
+  }
+  function ringStop() { clearInterval(ringTimer); ringTimer = null; if (ringCtx) { try { ringCtx.close(); } catch (e) { /* déjà fermé */ } ringCtx = null; } }
+  function dismissCall(channelId) {
+    const box = document.getElementById("incall"); if (box && (channelId == null || Number(box.dataset.cid) === channelId)) { box.remove(); ringStop(); clearTimeout(S.callT); return true; } return false;
+  }
+  function showIncomingCall(d) {
+    if (isBlockedId(d.from.id)) return;
+    dismissCall(); const box = el("div", "incall"); box.id = "incall"; box.dataset.cid = d.channelId; box.setAttribute("role", "alertdialog"); box.setAttribute("aria-label", "Appel entrant");
+    box.appendChild(avatar(d.from, "on")); const t = el("div", "inctx"); t.appendChild(el("b", "", d.from.name)); t.appendChild(el("small", "", V.cid ? "Appel entrant (vous êtes déjà en vocal)" : "Appel entrant…")); box.appendChild(t);
+    const ok = el("button", "icn ok"); ok.type = "button"; ok.title = "Répondre"; ok.setAttribute("aria-label", "Répondre"); ok.innerHTML = ic("phone", 20);
+    const no = el("button", "icn danger"); no.type = "button"; no.title = "Refuser"; no.setAttribute("aria-label", "Refuser"); no.innerHTML = ic("phone-off", 20);
+    ok.onclick = () => { dismissCall(d.channelId); if (!dmOf(d.channelId)) S.dms.push({ id: d.channelId, other: d.from }); go("dm", null, d.channelId); const c = dmOf(d.channelId); if (c) joinVoice({ id: d.channelId, name: d.from.name, kind: "dm" }); };
+    no.onclick = () => { S.sock.emit("callDecline", { channelId: d.channelId }); dismissCall(d.channelId); };
+    box.appendChild(ok); box.appendChild(no); document.body.appendChild(box);
+    ringStart(); clearTimeout(S.callT); S.callT = setTimeout(() => dismissCall(d.channelId), 45000);
+    if (document.hidden) { S.pendingTitle++; updateTitle(); try { if (S.local && "Notification" in window && Notification.permission === "granted") new Notification("Appel de " + d.from.name, { tag: "call", body: "Ouvrez Cordial pour répondre" }); } catch (e) { /* notifications indisponibles */ } }
+  }
+  async function joinVoice(c, after) {
     if (V.cid === c.id) return;
     if (!navigator.mediaDevices || !window.isSecureContext) return toast("Le vocal demande une connexion sécurisée (HTTPS) et un micro.");
     if (V.cid) leaveVoice();
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }); }
     catch (e) { return toast("Micro inaccessible : autorisez-le dans votre navigateur."); }
+    V.joining = c.id; V.declined = null;
     S.sock.emit("voiceJoin", { channelId: c.id }, (r) => {
+      V.joining = null;
       if (!r || r.error) { stream.getTracks().forEach((t) => t.stop()); return toast(r ? r.error : "Erreur de connexion."); }
-      V.cid = c.id; V.sid = S.sid; V.stream = stream; V.muted = false; V.ice = r.ice || S.ice;
+      V.dm = c.kind === "dm"; V.cid = c.id; V.sid = V.dm ? null : S.sid; V.stream = stream; V.muted = false; V.ice = r.ice || S.ice;
       r.peers.forEach((p) => { makePeer(p.socketId, p.user, true); const pe = V.peers.get(p.socketId); if (pe) pe.vid = { screenId: p.screen ? p.screenId : null, camId: p.cam ? p.camId : null }; });
-      startMonitor(); renderSide();
+      startMonitor(); renderSide(); renderVoicePanel(); renderCallBar();
+      if (V.declined && V.declined.channelId === c.id) { const dd = V.declined; V.declined = null; leaveVoice(); return toast(dd.by + " a refusé l'appel."); }
+      if (after) after();
     });
   }
   function makePeer(id, user, initiator) {
@@ -1531,7 +1594,7 @@
     stopShare(true); stopCam(true); [...V.peers.keys()].forEach(dropPeer);
     if (V.stream) V.stream.getTracks().forEach((t) => t.stop());
     clearInterval(V.timer); if (V.ctx) { V.ctx.close().catch(() => {}); V.ctx = null; }
-    V.cid = null; V.sid = null; V.stream = null; V.local = null; V.muted = false; renderVoicePanel(); renderSide();
+    clearTimeout(V.ringT); V.dm = false; V.cid = null; V.sid = null; V.stream = null; V.local = null; V.muted = false; renderVoicePanel(); renderSide(); renderCallBar();
   }
   function analyserFor(stream) {
     try {
