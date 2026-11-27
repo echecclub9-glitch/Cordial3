@@ -779,6 +779,35 @@
     modal({ title: "Mon statut", fields: [{ id: "s", label: "Statut", type: "select", options: STATUSES.map((s) => [s, LABEL[s] + (s === "dnd" ? " (aucune notification)" : s === "invisible" ? " (apparaître hors ligne)" : "")]), value: S.me.status }], buttons: [
       { label: "Enregistrer", run: (m) => S.sock.emit("status", { status: m.v("s") }, (r) => { if (r && r.ok) { S.me.status = m.v("s"); renderMe(); m.close(); } else m.error((r && r.error) || "Impossible de changer le statut."); }) }, { label: "Annuler", ghost: true }] });
   }
+  // [id, nom, description, couleurs d'aperçu : barre, liste, fond, accent]
+  const THEMES = [
+    ["galaxie", "Galaxie", "Étoiles et nébuleuses (défaut)", ["#0a081e", "#140f32", "#18123a", "#8b5cf6"]],
+    ["sombre", "Sombre", "Classique, sobre", ["#1e1f22", "#2b2d31", "#313338", "#5865f2"]],
+    ["clair", "Clair", "Fond blanc", ["#e3e5e8", "#f2f3f5", "#ffffff", "#5865f2"]],
+    ["minuit", "Minuit", "Noir pur, économe sur écran OLED", ["#000000", "#0a0a0b", "#000000", "#6d7bff"]],
+    ["foret", "Forêt", "Vert profond", ["#0d1913", "#14251c", "#1a2e23", "#2fb67c"]],
+    ["ocean", "Océan", "Bleu nuit", ["#08161f", "#0d2331", "#112c3d", "#2aa6e0"]],
+    ["crepuscule", "Crépuscule", "Prune et rose", ["#1f1218", "#2b1a23", "#35202b", "#ec4899"]],
+    ["auto", "Automatique", "Clair ou sombre selon votre appareil", ["#e3e5e8", "#f2f3f5", "#313338", "#5865f2"]],
+  ];
+  function themeModal() {
+    const card = el("div", "card setcard"); card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Thème");
+    card.appendChild(el("h2", "", "Thème")); card.appendChild(el("p", "sub", "Le thème est retenu sur cet appareil."));
+    const grid = el("div", "themegrid"); card.appendChild(grid);
+    const draw = () => {
+      grid.innerHTML = ""; const cur = window.cordialTheme.get();
+      THEMES.forEach(([id, name, desc, cols]) => {
+        const b = el("button", "themeopt" + (id === cur ? " on" : "")); b.type = "button"; b.dataset.theme = id; b.setAttribute("aria-pressed", String(id === cur));
+        const sw = el("span", "sw"); cols.forEach((c) => { const i = document.createElement("i"); i.style.background = c; sw.appendChild(i); });
+        b.appendChild(sw); b.appendChild(el("b", "", name)); b.appendChild(el("small", "", desc));
+        b.onclick = () => { window.cordialTheme.set(id); draw(); };
+        grid.appendChild(b);
+      });
+    };
+    draw();
+    const bye = el("button", "btn ghost", "Fermer"); bye.type = "button"; card.appendChild(bye);
+    const close = overlay(card); bye.onclick = close;
+  }
   function userSettings() {
     const card = el("div", "card setcard"); card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Paramètres");
     card.appendChild(el("h2", "", "Paramètres")); card.appendChild(el("p", "sub", S.me.name));
@@ -790,6 +819,8 @@
     row("shield", "Changer le mot de passe", "Déconnecte vos autres appareils", passwordModal);
     row("power", "Déconnecter mes autres appareils", "Garde seulement cet appareil connecté", () => modal({ title: "Déconnecter les autres appareils ?", sub: "Tous les autres navigateurs et applications devront se reconnecter.", buttons: [
       { label: "Déconnecter", danger: true, run: (m) => api("POST", "/api/sessions/revoke-others").then(() => { m.close(); toast("Autres appareils déconnectés."); }).catch((e) => m.error(e.message)) }, { label: "Annuler", ghost: true }] }));
+    sec("Apparence");
+    row("image", "Thème", "Actuellement : " + (THEMES.find((t) => t[0] === window.cordialTheme.get()) || THEMES[0])[1], themeModal);
     sec("Notifications");
     row(S.me.status === "dnd" ? "bell-off" : "circle", "Statut", LABEL[S.me.status] + (S.me.status === "dnd" ? " : aucune notification" : ""), statusModal);
     const on = S.push || S.local;

@@ -55,6 +55,7 @@ Variables optionnelles :
 - **Caméra** dans les salons vocaux (bouton 🎥 de la barre vocale), utilisable en même temps que le partage d'écran ; l'image passe de navigateur à navigateur (environ 0,7 Mbit/s par spectateur)
 - Bot **Cordibot** : `/aide`, `/de`, `/pile`, `/choix a|b|c`, `/sondage Question|Option 1|Option 2`
 - **Catégories de salons** : « Paramètres du serveur » → Catégories (droit « gérer les salons »). Une carte par catégorie avec ses salons : flèches pour réordonner, renommer, « + » pour créer un salon dedans, suppression (ses salons reviennent dans « Salons » / « Vocal »). Dans la liste de salons, chaque catégorie se replie d'un clic (retenu sur votre appareil) et a son bouton « + ». 20 catégories max.
+- **Thèmes** : Paramètres (engrenage en bas à gauche) → Apparence → Thème : Galaxie (défaut), Sombre, Clair, Minuit (noir pur), Forêt, Océan, Crépuscule, ou Automatique (suit le mode clair/sombre de l'appareil). Le choix est retenu sur chaque appareil (navigateur, appli installée, bureau) et s'applique aussi à la page de connexion.
 
 ## Vocal et notifications : à savoir
 

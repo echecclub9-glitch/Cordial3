@@ -38,3 +38,50 @@ body::after {
 .side, .mem, .rail, .modal, .card, .menu, .panel, .drop, header { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
 ::selection { background: rgba(139, 92, 246, .55); }
 ::-webkit-scrollbar-thumb { background: rgba(139, 92, 246, .35); border-radius: 8px; }
+
+/* ---------- Thèmes au choix (Paramètres → Apparence). « galaxie » est le thème par défaut ci-dessus. ---------- */
+:root[data-theme]:not([data-theme="galaxie"]) body { background: var(--main) !important; }
+:root[data-theme]:not([data-theme="galaxie"]) body::before, :root[data-theme]:not([data-theme="galaxie"]) body::after { display: none; }
+:root[data-theme]:not([data-theme="galaxie"]) html, :root[data-theme]:not([data-theme="galaxie"]) { background: var(--main); }
+:root[data-theme="sombre"] {
+  --rail: #1e1f22; --side: #2b2d31; --main: #313338; --input: #383a40; --hover: #35373c; --active: #404249;
+  --fg: #dbdee1; --strong: #f2f3f5; --muted: #949ba4; --line: #26272b; --accent: #5865f2; --accent-2: #4752c4; --ok: #23a55a; --warn: #f0b232; --bad: #f23f43; --bad-2: #c9282c; color-scheme: dark;
+}
+:root[data-theme="clair"] {
+  --rail: #e3e5e8; --side: #f2f3f5; --main: #ffffff; --input: #e9ebee; --hover: #ebedef; --active: #dcdee2;
+  --fg: #2e3338; --strong: #060607; --muted: #5c6068; --line: #d4d7dc; --accent: #5865f2; --accent-2: #4752c4; --ok: #1a7f4b; --warn: #a96a00; --bad: #d83c3e; --bad-2: #b02a2c; color-scheme: light;
+}
+:root[data-theme="minuit"] {
+  --rail: #000000; --side: #0a0a0b; --main: #000000; --input: #151517; --hover: #141416; --active: #1f1f23;
+  --fg: #e4e4e8; --strong: #ffffff; --muted: #8b8b94; --line: #1a1a1d; --accent: #6d7bff; --accent-2: #5562e0; --ok: #2fcf7a; --warn: #f5b942; --bad: #ff5560; --bad-2: #d6343f; color-scheme: dark;
+}
+:root[data-theme="foret"] {
+  --rail: #0d1913; --side: #14251c; --main: #1a2e23; --input: #223a2c; --hover: #21392b; --active: #2b4a38;
+  --fg: #dcefe3; --strong: #ffffff; --muted: #8fb09c; --line: #0b140f; --accent: #2fb67c; --accent-2: #1f9462; --ok: #4ade80; --warn: #facc15; --bad: #f87171; --bad-2: #d64545; color-scheme: dark;
+}
+:root[data-theme="ocean"] {
+  --rail: #08161f; --side: #0d2331; --main: #112c3d; --input: #19384c; --hover: #17384c; --active: #204860;
+  --fg: #d9ecf7; --strong: #ffffff; --muted: #86aabf; --line: #071118; --accent: #2aa6e0; --accent-2: #1a85b8; --ok: #34d399; --warn: #fbbf24; --bad: #fb7185; --bad-2: #d94560; color-scheme: dark;
+}
+:root[data-theme="crepuscule"] {
+  --rail: #1f1218; --side: #2b1a23; --main: #35202b; --input: #432a37; --hover: #3f2633; --active: #4e3041;
+  --fg: #f3dde6; --strong: #ffffff; --muted: #b995a6; --line: #170c11; --accent: #ec4899; --accent-2: #c8327a; --ok: #34d399; --warn: #fbbf24; --bad: #fb7185; --bad-2: #d94560; color-scheme: dark;
+}
+:root[data-theme="clair"] .seti, :root[data-theme="clair"] .btn.ghost { background: rgba(0,0,0,.06); }
+:root[data-theme="clair"] ::selection { background: rgba(88,101,242,.3); }
+:root[data-theme="clair"] ::-webkit-scrollbar-thumb { background: rgba(0,0,0,.2); }
+:root[data-theme]:not([data-theme="galaxie"]):not([data-theme="clair"]) ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); }
+:root[data-theme]:not([data-theme="galaxie"]) ::selection { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+/* sélecteur de thème */
+.themegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin: 12px 0; }
+.themeopt { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; border: 2px solid var(--line); text-align: left; color: var(--fg); background: transparent; }
+.themeopt:hover { border-color: var(--muted); } .themeopt.on { border-color: var(--accent); }
+.themeopt .sw { display: flex; height: 44px; border-radius: 6px; overflow: hidden; border: 1px solid rgba(128,128,128,.3); } .themeopt .sw i { flex: 1; } .themeopt .sw i:nth-child(1) { flex: .5; } .themeopt .sw i:nth-child(4) { flex: .6; }
+.themeopt b { font-size: 13px; } .themeopt small { font-size: 11px; color: var(--muted); }
+:root[data-theme]:not([data-theme="galaxie"]) .me { background: var(--rail); }
+:root[data-theme]:not([data-theme="galaxie"]) .menu { background: var(--side); border: 1px solid var(--line); }
+:root[data-theme]:not([data-theme="galaxie"]) .m .tx code { background: var(--input); }
+:root[data-theme]:not([data-theme="galaxie"]) .toast { color: var(--main); }
+:root[data-theme="clair"] .overlay { background: rgba(0,0,0,.45); }
+:root[data-theme="clair"] .card, :root[data-theme="clair"] .modal { box-shadow: 0 8px 32px rgba(0,0,0,.2); }
+.themeopt .sw { width: 100%; }
