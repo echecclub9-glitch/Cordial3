@@ -56,6 +56,7 @@ Variables optionnelles :
 - Bot **Cordibot** : `/aide`, `/de`, `/pile`, `/choix a|b|c`, `/sondage Question|Option 1|Option 2`
 - **Catégories de salons** : « Paramètres du serveur » → Catégories (droit « gérer les salons »). Une carte par catégorie avec ses salons : flèches pour réordonner, renommer, « + » pour créer un salon dedans, suppression (ses salons reviennent dans « Salons » / « Vocal »). Dans la liste de salons, chaque catégorie se replie d'un clic (retenu sur votre appareil) et a son bouton « + ». 20 catégories max.
 - **Thèmes** : Paramètres (engrenage en bas à gauche) → Apparence → Thème : Galaxie (défaut), Sombre, Clair, Minuit (noir pur), Forêt, Océan, Crépuscule, ou Automatique (suit le mode clair/sombre de l'appareil). Le choix est retenu sur chaque appareil (navigateur, appli installée, bureau) et s'applique aussi à la page de connexion.
+- **Amis et blocage** : engrenage en bas à gauche → « Amis et utilisateurs bloqués », ou le bouton « Amis » de l'accueil (Messages privés). Onglets Amis / En attente / Bloqués / Ajouter (par pseudo). Depuis le profil ou le menu d'un membre : ajouter en ami, accepter, retirer, bloquer. Deux amis peuvent s'écrire sans partager de serveur. Bloquer retire l'ami, masque ses messages dans les salons (bandeau « Afficher »), l'empêche de vous écrire en privé ou de vous envoyer une demande, et coupe ses notifications. Le blocage est privé : la personne n'est pas prévenue.
 
 ## Vocal et notifications : à savoir
 

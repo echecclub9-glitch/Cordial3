@@ -63,6 +63,14 @@ db.exec(`
     role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     PRIMARY KEY (user_id, role_id)
   );
+  CREATE TABLE IF NOT EXISTS friends (
+    a INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, b INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    requester INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created INTEGER NOT NULL, PRIMARY KEY (a, b)
+  );
+  CREATE TABLE IF NOT EXISTS blocks (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created INTEGER NOT NULL, PRIMARY KEY (user_id, blocked_id)
+  );
   CREATE TABLE IF NOT EXISTS notif_mutes (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, target_id INTEGER NOT NULL, until INTEGER,
     PRIMARY KEY (user_id, kind, target_id)
@@ -303,7 +311,7 @@ function hit(map, key, windowMs, max) {
   if (list.length >= max) { map.set(key, list); return true; }
   list.push(now); map.set(key, list); return false;
 }
-const profileHits = new Map(), uploadHits = new Map(), reportHits = new Map(), searchHits = new Map();
+const friendHits = new Map(), profileHits = new Map(), uploadHits = new Map(), reportHits = new Map(), searchHits = new Map();
 
 const app = express();
 app.disable("x-powered-by");
@@ -574,6 +582,24 @@ const lastSent = new Map(); // "userId:channelId" -> horodatage du dernier messa
 
 const isOnline = (id) => online.has(id);
 const isStaff = (u) => u.role === "admin" || u.role === "mod";
+/* --- Amis et blocage --- */
+const pair = (x, y) => (x < y ? [x, y] : [y, x]);
+const friendRow = (x, y) => { const [a, b] = pair(x, y); return db.prepare("SELECT * FROM friends WHERE a = ? AND b = ?").get(a, b); };
+const isBlocking = (by, target) => !!db.prepare("SELECT 1 AS ok FROM blocks WHERE user_id = ? AND blocked_id = ?").get(by, target);
+const blockedEither = (x, y) => isBlocking(x, y) || isBlocking(y, x);
+const areFriends = (x, y) => { const r = friendRow(x, y); return !!r && r.status === "accepted"; };
+function friendPub(id) { const o = q.userById.get(id); return o ? { id: o.id, name: o.name, color: o.color, role: o.role, avatar: o.avatar || null, custom: o.custom || "", status: shownStatus(o) } : null; }
+function socialOf(uid) {
+  const out = { friends: [], incoming: [], outgoing: [], blocked: [] };
+  db.prepare("SELECT * FROM friends WHERE a = ? OR b = ?").all(uid, uid).forEach((r) => {
+    const p = friendPub(r.a === uid ? r.b : r.a); if (!p) return;
+    if (r.status === "accepted") out.friends.push(p); else if (r.requester === uid) out.outgoing.push(p); else out.incoming.push(p);
+  });
+  db.prepare("SELECT blocked_id FROM blocks WHERE user_id = ? ORDER BY created DESC").all(uid).forEach((r) => { const p = friendPub(r.blocked_id); if (p) out.blocked.push(p); });
+  out.friends.sort((x, y) => x.name.localeCompare(y.name, "fr"));
+  return out;
+}
+const pushSocial = (...ids) => ids.forEach((id) => io.to("user:" + id).emit("social", socialOf(id)));
 function shownStatus(u) {
   if (u.role === "bot") return "on";
   if (!isOnline(u.id) || u.status === "invisible") return "off";
@@ -748,6 +774,7 @@ function pushForMessage(c, user, m, text) {
   who.forEach((id) => {
     const target = q.userById.get(id);
     if (!target || target.banned || target.role === "bot" || (c.private && !canSee(target, c))) return;
+    if (isBlocking(id, user.id)) return;
     // « Ne pas déranger » coupe tout ; un salon ou un serveur en sourdine ne notifie que pour une mention directe
     if (target.status === "dnd") return;
     if (notifMuted(id, c) && !text.toLowerCase().includes("@" + target.name.toLowerCase())) return;
@@ -768,7 +795,7 @@ io.on("connection", (socket) => {
   const servers = q.serversOf.all(uid);
   servers.forEach((s) => socket.join("srv:" + s.id));
   const dms = q.dmsOf.all(uid).map((d) => ({ id: d.id, other: { id: d.oid, name: d.name, color: d.color, role: d.role, avatar: d.avatar || null, custom: d.custom || "", status: shownStatus(d.oid ? { ...d, id: d.oid } : d) } }));
-  socket.emit("ready", { me: { ...pub(user), status: user.status }, servers: servers.map((s) => serverView(s, user)), dms, ice: ICE, notifMutes: notifMutesOf(uid) });
+  socket.emit("ready", { me: { ...pub(user), status: user.status }, servers: servers.map((s) => serverView(s, user)), dms, ice: ICE, notifMutes: notifMutesOf(uid), social: socialOf(uid) });
   broadcastPresence(user);
 
   let stamps = [], voiceChan = null;
@@ -811,6 +838,11 @@ io.on("connection", (socket) => {
     const c = canAccess(uid, channelId);
     if (!c) return ack({ error: "Accès refusé." });
     if (c.kind === "voice") return ack({ error: "Ce salon est un salon vocal." });
+    if (c.kind === "dm") {
+      const peer = q.dmUsers.all(c.id).map((r) => r.user_id).find((i) => i !== uid);
+      if (peer && isBlocking(uid, peer)) return ack({ error: "Vous avez bloqué cette personne. Débloquez-la pour lui écrire." });
+      if (peer && isBlocking(peer, uid)) return ack({ error: "Cette personne ne peut pas recevoir vos messages." });
+    }
     if (c.kind !== "dm") { const mu = activeMute(c.server_id, uid); if (mu) return ack({ error: "Vous êtes en sourdine jusqu'au " + fmtDate(mu.until) + (mu.reason ? " (" + mu.reason + ")" : "") + "." }); }
     const body = clean(text, MAX_MSG), power = privileged(user, c, P.VIP);
     if (c.readonly && !power) return ack({ error: "Ce salon est en lecture seule." });
@@ -953,18 +985,70 @@ io.on("connection", (socket) => {
   socket.on("getProfile", guard(({ userId }, ack) => {
     const t = q.userById.get(Number(userId));
     if (!t || t.banned) return ack({ error: "Profil introuvable." });
-    const allowed = t.id === uid || isStaff(cur()) || t.role === "bot" || q.shareServer.get(uid, t.id) || q.findDm.get(uid, t.id);
+    const allowed = t.id === uid || isStaff(cur()) || t.role === "bot" || q.shareServer.get(uid, t.id) || q.findDm.get(uid, t.id) || friendRow(uid, t.id);
     if (!allowed) return ack({ error: "Profil introuvable." });
     ack({ profile: fullProfile(t) });
   }));
 
   /* --- Messages privés --- */
+  /* --- Amis et blocage --- */
+  const targetUser = (p) => {
+    let t = null;
+    if (p && p.userId != null) t = q.userById.get(Number(p.userId));
+    else if (p && typeof p.name === "string") t = db.prepare("SELECT * FROM users WHERE name = ? COLLATE NOCASE").get(clean(p.name, 40).replace(/^@/, ""));
+    return t && !t.banned ? t : null;
+  };
+  socket.on("social", guard((_p, ack) => ack({ social: socialOf(uid) })));
+  socket.on("friendRequest", guard((p, ack) => {
+    if (hit(friendHits, uid, 60000, 20)) return ack({ error: "Trop de demandes, patientez un instant." });
+    const t = targetUser(p);
+    if (!t) return ack({ error: "Aucun utilisateur ne porte ce pseudo." });
+    if (t.id === uid) return ack({ error: "Vous ne pouvez pas vous ajouter vous-même." });
+    if (t.role === "bot") return ack({ error: "Un robot ne peut pas être ajouté en ami." });
+    if (isBlocking(uid, t.id)) return ack({ error: "Vous avez bloqué cette personne. Débloquez-la d'abord." });
+    if (isBlocking(t.id, uid)) return ack({ error: "Impossible d'envoyer la demande à cette personne." });
+    const r = friendRow(uid, t.id);
+    if (r && r.status === "accepted") return ack({ error: "Vous êtes déjà amis." });
+    if (r && r.requester === uid) return ack({ error: "Demande déjà envoyée." });
+    if (r) { db.prepare("UPDATE friends SET status = 'accepted' WHERE a = ? AND b = ?").run(r.a, r.b); pushSocial(uid, t.id); io.to("user:" + t.id).emit("friendNotice", { text: cur().name + " a accepté votre demande d'ami." }); return ack({ ok: true, accepted: true, name: t.name }); }
+    const [a, b] = pair(uid, t.id);
+    db.prepare("INSERT INTO friends (a, b, requester, status, created) VALUES (?,?,?,'pending',?)").run(a, b, uid, Date.now());
+    pushSocial(uid, t.id); io.to("user:" + t.id).emit("friendNotice", { text: cur().name + " vous a envoyé une demande d'ami." });
+    ack({ ok: true, name: t.name });
+  }));
+  socket.on("friendAccept", guard((p, ack) => {
+    const t = targetUser(p), r = t && friendRow(uid, t.id);
+    if (!r || r.status !== "pending" || r.requester === uid) return ack({ error: "Demande introuvable." });
+    db.prepare("UPDATE friends SET status = 'accepted' WHERE a = ? AND b = ?").run(r.a, r.b);
+    pushSocial(uid, t.id); io.to("user:" + t.id).emit("friendNotice", { text: cur().name + " a accepté votre demande d'ami." }); ack({ ok: true });
+  }));
+  // Refuser, annuler une demande envoyée ou retirer un ami : même geste
+  socket.on("friendRemove", guard((p, ack) => {
+    const t = targetUser(p) || (p && p.userId != null ? q.userById.get(Number(p.userId)) : null), r = t && friendRow(uid, t.id);
+    if (!r) return ack({ error: "Introuvable." });
+    db.prepare("DELETE FROM friends WHERE a = ? AND b = ?").run(r.a, r.b); pushSocial(uid, t.id); ack({ ok: true });
+  }));
+  socket.on("block", guard((p, ack) => {
+    const t = targetUser(p); if (!t) return ack({ error: "Utilisateur introuvable." });
+    if (t.id === uid) return ack({ error: "Vous ne pouvez pas vous bloquer vous-même." });
+    tx(() => {
+      db.prepare("INSERT OR IGNORE INTO blocks (user_id, blocked_id, created) VALUES (?,?,?)").run(uid, t.id, Date.now());
+      const [a, b] = pair(uid, t.id); db.prepare("DELETE FROM friends WHERE a = ? AND b = ?").run(a, b);
+    });
+    pushSocial(uid, t.id); ack({ ok: true });
+  }));
+  socket.on("unblock", guard((p, ack) => {
+    const t = p && p.userId != null ? q.userById.get(Number(p.userId)) : null; if (!t) return ack({ error: "Utilisateur introuvable." });
+    db.prepare("DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?").run(uid, t.id); pushSocial(uid); ack({ ok: true });
+  }));
   socket.on("openDm", guard(({ userId }, ack) => {
     const other = q.userById.get(Number(userId));
     if (!other || other.banned) return ack({ error: "Utilisateur introuvable." });
     if (other.id === uid) return ack({ error: "Vous ne pouvez pas vous écrire à vous-même." });
     if (other.role === "bot") return ack({ error: "Cordibot ne répond pas aux messages privés." });
-    if (!q.shareServer.get(uid, other.id)) return ack({ error: "Vous devez partager un serveur avec cette personne." });
+    if (isBlocking(uid, other.id)) return ack({ error: "Vous avez bloqué cette personne. Débloquez-la pour lui écrire." });
+    if (isBlocking(other.id, uid)) return ack({ error: "Vous ne pouvez pas écrire à cette personne." });
+    if (!q.shareServer.get(uid, other.id) && !areFriends(uid, other.id)) return ack({ error: "Vous devez partager un serveur ou être amis avec cette personne." });
     let created = false;
     const found = q.findDm.get(uid, other.id);
     const id = found ? found.id : tx(() => {

@@ -134,6 +134,8 @@
     sock.on("serverDeleted", onServerDeleted);
     sock.on("serverLeft", (d) => onServerDeleted({ serverId: d.serverId, quiet: true }));
     sock.on("userDeleted", (d) => { Object.keys(S.msgs).forEach((k) => { S.msgs[k] = S.msgs[k].filter((m) => m.user.id !== d.userId); }); loadMembers(S.sid); renderMsgs(); });
+    sock.on("social", (s) => { S.social = s; socialChanged(); });
+    sock.on("friendNotice", (d) => toast(d.text));
     sock.on("dmOpened", (d) => { if (!dmOf(d.id)) S.dms.push(d); renderSide(); renderRail(); });
     sock.on("roleChanged", (d) => { S.me.role = d.role; renderMe(); renderMsgs(); toast(d.role === "mod" ? "Vous êtes maintenant modérateur." : "Votre rôle de modérateur a été retiré."); });
     sock.on("announce", (d) => { const a = $("announce"); a.textContent = "📢 " + d.text; a.hidden = false; clearTimeout(S.annT); S.annT = setTimeout(() => { a.hidden = true; }, 45000); });
@@ -152,7 +154,7 @@
   }
   function patch(cid, id, fn) { const l = S.msgs[cid]; if (!l) return; l.forEach((m) => { if (m.id === id) fn(m); }); if (cid === S.cid) renderMsgs(); if (S.panel) renderPanelKeep(); }
   function onReady(d) {
-    S.me = d.me; S.servers = d.servers; S.dms = d.dms; S.ice = d.ice; S.nm = d.notifMutes || [];
+    S.me = d.me; S.servers = d.servers; S.dms = d.dms; S.ice = d.ice; S.nm = d.notifMutes || []; S.social = d.social || { friends: [], incoming: [], outgoing: [], blocked: [] };
     if (S.view === "dm") { if (!dmOf(S.cid)) S.cid = S.dms[0] ? S.dms[0].id : null; }
     else {
       if (!server()) { S.sid = S.servers[0] && S.servers[0].id; S.cid = null; }
@@ -203,9 +205,78 @@
       ...(cur ? [{ label: "Réactiver", ghost: true, run: (m) => S.sock.emit("notifMute", { kind, id, off: true }, (r) => { if (r && r.error) m.error(r.error); else { m.close(); toast("Notifications réactivées."); } }) }] : []),
       { label: "Annuler", ghost: true }] });
   }
+  /* ---------- Amis et blocage ---------- */
+  S.social = { friends: [], incoming: [], outgoing: [], blocked: [] }; S.reveal = {};
+  const isBlockedId = (id) => S.social.blocked.some((u) => u.id === id);
+  function relOf(id) {
+    if (S.social.friends.some((u) => u.id === id)) return "friend";
+    if (S.social.incoming.some((u) => u.id === id)) return "incoming";
+    if (S.social.outgoing.some((u) => u.id === id)) return "outgoing";
+    return isBlockedId(id) ? "blocked" : "none";
+  }
+  function socialChanged() {
+    if (S.view === "dm") renderSide();
+    if (S.cid != null && S.msgs[S.cid]) renderMsgs(false);
+    if (S.socRedraw) S.socRedraw();
+  }
+  function soc(ev, payload, okMsg, done) {
+    S.sock.emit(ev, payload, (r) => { if (r && r.error) toast(r.error); else { if (okMsg) toast(typeof okMsg === "function" ? okMsg(r) : okMsg); if (done) done(r); } });
+  }
+  const askBlock = (u, after) => modal({ title: "Bloquer " + u.name + " ?", sub: "Vous ne verrez plus ses messages (ils sont masqués), il ne pourra plus vous écrire en privé ni vous envoyer de demande d'ami, et il sera retiré de vos amis. Vous pouvez le débloquer à tout moment.", buttons: [
+    { label: "Bloquer", danger: true, run: (m) => { S.sock.emit("block", { userId: u.id }, (r) => { if (r && r.error) return m.error(r.error); m.close(); toast(u.name + " est bloqué."); if (after) after(); }); } }, { label: "Annuler", ghost: true }] });
+  function friendActions(u) {
+    const rel = relOf(u.id), out = [];
+    const mk = (label, fn, cls) => { const b = el("button", "btn " + (cls || "ghost") + " sm", label); b.type = "button"; b.onclick = fn; return b; };
+    if (rel === "none") out.push(mk("Ajouter en ami", () => soc("friendRequest", { userId: u.id }, (r) => r.accepted ? "Vous êtes maintenant amis avec " + u.name + "." : "Demande envoyée à " + u.name + "."), ""));
+    if (rel === "outgoing") out.push(mk("Annuler la demande", () => soc("friendRemove", { userId: u.id }, "Demande annulée.")));
+    if (rel === "incoming") { out.push(mk("Accepter la demande", () => soc("friendAccept", { userId: u.id }, u.name + " est maintenant votre ami."), "")); out.push(mk("Refuser", () => soc("friendRemove", { userId: u.id }))); }
+    if (rel === "friend") out.push(mk("Retirer des amis", () => soc("friendRemove", { userId: u.id }, u.name + " a été retiré de vos amis.")));
+    if (rel === "blocked") out.push(mk("Débloquer", () => soc("unblock", { userId: u.id }, u.name + " est débloqué.")));
+    else out.push(mk("Bloquer", () => askBlock(u), "ghost danger"));
+    return out;
+  }
+  function friendsModal(startTab) {
+    S.sock.emit("social", {}, (r) => { if (r && r.social) { S.social = r.social; if (S.socRedraw) S.socRedraw(); } });
+    let tab = startTab || "all";
+    const card = el("div", "card setcard"); card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Amis");
+    card.appendChild(el("h2", "", "Amis")); const tabs = el("div", "frtabs"); card.appendChild(tabs);
+    const body = el("div", "frlist"); card.appendChild(body); const err = el("div", "err"); card.appendChild(err);
+    function row(u, actions, sub) {
+      const r = el("div", "frrow"); r.appendChild(avatar(u, u.status)); const t = el("div", "frname"); t.appendChild(el("b", "", u.name)); if (sub) t.appendChild(el("small", "", sub)); r.appendChild(t);
+      const a = el("div", "fract"); actions.forEach((x) => a.appendChild(x)); r.appendChild(a); body.appendChild(r);
+    }
+    function draw() {
+      const s = S.social; tabs.innerHTML = "";
+      const defs = [["all", "Amis" + (s.friends.length ? " · " + s.friends.length : "")], ["pending", "En attente" + (s.incoming.length ? " · " + s.incoming.length : "")], ["blocked", "Bloqués"], ["add", "Ajouter"]];
+      defs.forEach(([id, label]) => { const b = el("button", "btn ghost sm" + (tab === id ? " on" : ""), label); b.type = "button"; b.dataset.tab = id; b.onclick = () => { tab = id; err.textContent = ""; draw(); }; tabs.appendChild(b); });
+      body.innerHTML = "";
+      const mk = (label, fn, cls) => { const b = el("button", "btn " + (cls || "ghost") + " sm", label); b.type = "button"; b.onclick = fn; return b; };
+      if (tab === "all") {
+        if (!s.friends.length) body.appendChild(el("div", "emptyside", "Aucun ami pour le moment. Utilisez l'onglet « Ajouter » avec un pseudo, ou le profil d'un membre."));
+        s.friends.forEach((u) => row(u, [mk("Message", () => { closeFr(); openDm(u.id); }, ""), mk("Retirer", () => soc("friendRemove", { userId: u.id }))], LABEL[u.status] || ""));
+      } else if (tab === "pending") {
+        if (!s.incoming.length && !s.outgoing.length) body.appendChild(el("div", "emptyside", "Aucune demande en attente."));
+        s.incoming.forEach((u) => row(u, [mk("Accepter", () => soc("friendAccept", { userId: u.id }), ""), mk("Refuser", () => soc("friendRemove", { userId: u.id }))], "Demande reçue"));
+        s.outgoing.forEach((u) => row(u, [mk("Annuler", () => soc("friendRemove", { userId: u.id }))], "Demande envoyée"));
+      } else if (tab === "blocked") {
+        if (!s.blocked.length) body.appendChild(el("div", "emptyside", "Vous n'avez bloqué personne."));
+        s.blocked.forEach((u) => row(u, [mk("Débloquer", () => soc("unblock", { userId: u.id }))], ""));
+      } else {
+        body.appendChild(el("p", "sub", "Entrez le pseudo exact de la personne (sans le @)."));
+        const f = el("div", "catadd"), inp = el("input", "field"); inp.id = "frName"; inp.placeholder = "Pseudo"; inp.maxLength = 40;
+        const go2 = () => { if (!inp.value.trim()) return; S.sock.emit("friendRequest", { name: inp.value }, (r) => { if (r && r.error) err.textContent = r.error; else { err.textContent = ""; inp.value = ""; toast(r.accepted ? "Vous êtes maintenant amis avec " + r.name + "." : "Demande envoyée à " + r.name + "."); } }); };
+        inp.onkeydown = (e) => { if (e.key === "Enter") go2(); }; const sb = el("button", "btn", "Envoyer"); sb.type = "button"; sb.onclick = go2;
+        f.appendChild(inp); f.appendChild(sb); body.appendChild(f); setTimeout(() => inp.focus(), 0);
+      }
+    }
+    draw(); S.socRedraw = () => { if (tab !== "add") draw(); else { tabs.querySelectorAll("button").forEach((b) => { if (b.dataset.tab === "pending") { const n = S.social.incoming.length; b.textContent = "En attente" + (n ? " · " + n : ""); } }); } };
+    const x = el("button", "btn ghost", "Fermer"); x.type = "button"; card.appendChild(x);
+    const closeOv = overlay(card); const closeFr = () => { S.socRedraw = null; closeOv(); }; x.onclick = closeFr;
+  }
   function onMessage(m) {
     const mine = m.user.id === S.me.id;
     if (S.msgs[m.channelId]) S.msgs[m.channelId].push(m);
+    if (!mine && isBlockedId(m.user.id)) { if (m.channelId === S.cid) renderMsgs(true, true); return; }
     if (m.channelId === S.cid) renderMsgs(true, true);
     else if (!mine && !(chMuted(m.channelId) && !directPing(m))) { S.unread[m.channelId] = (S.unread[m.channelId] || 0) + 1; renderSide(); renderRail(); updateTitle(); }
     if (document.hidden && !mine && !quiet(m)) { S.pendingTitle++; updateTitle(); }
@@ -289,6 +360,7 @@
     $("app").classList.toggle("dmview", S.view === "dm");
     if (S.view === "dm") {
       $("sName").textContent = "Messages privés"; $("bSet").hidden = true; $("sName").parentNode.classList.remove("hasbanner"); $("sName").parentNode.style.backgroundImage = "";
+      { const fb = icText(el("button", "dmrow frbtn"), "user", "Amis"); fb.type = "button"; const n = S.social.incoming.length; if (n) fb.appendChild(el("span", "badge", String(n))); fb.onclick = () => friendsModal(n ? "pending" : "all"); box.appendChild(fb); }
       if (!S.dms.length) { box.appendChild(el("div", "emptyside", "Aucune conversation. Cliquez sur un membre d'un serveur, puis sur « Écrire à… » pour lui envoyer un message.")); return; }
       S.dms.forEach((d) => {
         const u = S.unread[d.id] || 0;
@@ -518,7 +590,11 @@
       w.appendChild(el("h3", "", c.kind === "dm" ? "Conversation avec " + c.name : "Bienvenue dans #" + c.name + " !"));
       w.appendChild(el("p", "", c.kind === "dm" ? "C'est le début de votre conversation privée. Seuls vous deux pouvez la lire." : c.topic || "C'est le début du salon.")); box.appendChild(w);
     }
-    let prev = null; list.forEach((m) => { box.appendChild(msgNode(m, prev, false)); prev = m; });
+    let prev = null, hid = [];
+    const flush = () => { if (!hid.length) return; const ids = hid.map((x) => x.id), n = hid.length, who = hid[0].user.name; hid = [];
+      const b = el("button", "blockedrun", n + " message" + (n > 1 ? "s" : "") + " de " + who + " (bloqué) · Afficher"); b.type = "button"; b.onclick = () => { ids.forEach((i) => { S.reveal[i] = 1; }); renderMsgs(false); }; box.appendChild(b); };
+    list.forEach((m) => { if (m.user.id !== S.me.id && isBlockedId(m.user.id) && !S.reveal[m.id]) { hid.push(m); return; } flush(); box.appendChild(msgNode(m, prev, false)); prev = m; });
+    flush();
     (S.ephemeral[c.id] || []).forEach((e) => { const d = el("div", "eph"); richText(d, e.text); d.appendChild(el("small", "", "Seul vous voyez ce message · Cordibot")); box.appendChild(d); });
     if (toBottom && (!soft || near)) box.scrollTop = box.scrollHeight; else box.scrollTop = prevT;
   }
@@ -760,6 +836,13 @@
     { const b = el("button", "", "👤 Voir le profil"); b.onclick = () => { closeMenu(); profileCard(u.id); }; m.appendChild(b); }
     if (u.id !== S.me.id && u.role !== "bot") { const b = icText(el("button", ""), "message", "Écrire à " + u.name); b.onclick = () => { closeMenu(); openDm(u.id); }; m.appendChild(b); }
     else m.appendChild(el("div", "hd", u.id === S.me.id ? "C'est vous" : "Robot du serveur"));
+    if (u.id !== S.me.id && u.role !== "bot") {
+      const rel = relOf(u.id);
+      if (rel === "none") { const b = icText(el("button", ""), "user", "Ajouter en ami"); b.onclick = () => { closeMenu(); soc("friendRequest", { userId: u.id }, (r) => r.accepted ? "Vous êtes maintenant amis avec " + u.name + "." : "Demande envoyée à " + u.name + "."); }; m.appendChild(b); }
+      else if (rel === "incoming") { const b = icText(el("button", ""), "check", "Accepter la demande d'ami"); b.onclick = () => { closeMenu(); soc("friendAccept", { userId: u.id }, u.name + " est maintenant votre ami."); }; m.appendChild(b); }
+      if (rel === "blocked") { const b = icText(el("button", ""), "ban", "Débloquer"); b.onclick = () => { closeMenu(); soc("unblock", { userId: u.id }, u.name + " est débloqué."); }; m.appendChild(b); }
+      else { const b = icText(el("button", "danger"), "ban", "Bloquer"); b.onclick = () => { closeMenu(); askBlock(u); }; m.appendChild(b); }
+    }
     roleItems(m, u);
     document.body.appendChild(m);
     const r = m.getBoundingClientRect(); m.style.left = Math.max(8, Math.min(ev.clientX, innerWidth - r.width - 8)) + "px"; m.style.top = Math.max(8, Math.min(ev.clientY, innerHeight - r.height - 8)) + "px";
@@ -819,6 +902,8 @@
     row("shield", "Changer le mot de passe", "Déconnecte vos autres appareils", passwordModal);
     row("power", "Déconnecter mes autres appareils", "Garde seulement cet appareil connecté", () => modal({ title: "Déconnecter les autres appareils ?", sub: "Tous les autres navigateurs et applications devront se reconnecter.", buttons: [
       { label: "Déconnecter", danger: true, run: (m) => api("POST", "/api/sessions/revoke-others").then(() => { m.close(); toast("Autres appareils déconnectés."); }).catch((e) => m.error(e.message)) }, { label: "Annuler", ghost: true }] }));
+    sec("Amis");
+    row("user", "Amis et utilisateurs bloqués", S.social.friends.length + " ami" + (S.social.friends.length > 1 ? "s" : "") + (S.social.incoming.length ? " · " + S.social.incoming.length + " demande(s) reçue(s)" : "") + " · " + S.social.blocked.length + " bloqué" + (S.social.blocked.length > 1 ? "s" : ""), () => { close(); friendsModal(S.social.incoming.length ? "pending" : "all"); });
     sec("Apparence");
     row("image", "Thème", "Actuellement : " + (THEMES.find((t) => t[0] === window.cordialTheme.get()) || THEMES[0])[1], themeModal);
     sec("Notifications");
@@ -1155,6 +1240,12 @@
       const close = overlay(card);
       if (p.id === S.me.id) { const b = el("button", "btn", "Modifier mon profil"); b.type = "button"; b.onclick = () => { close(); editProfile(); }; body.appendChild(b); }
       else if (p.role !== "bot") { const b = icText(el("button", "btn"), "message", "Envoyer un message"); b.type = "button"; b.onclick = () => { close(); openDm(p.id); }; body.appendChild(b); }
+      if (p.id !== S.me.id && p.role !== "bot") {
+        const rel = relOf(p.id); if (rel === "friend") body.appendChild(el("p", "pfriend", "✔ Vous êtes amis"));
+        if (rel === "incoming") body.appendChild(el("p", "pfriend", p.name + " vous a envoyé une demande d'ami."));
+        if (rel === "blocked") body.appendChild(el("p", "pfriend", "Vous avez bloqué cette personne."));
+        const act = el("div", "pacts"); friendActions(p).forEach((x) => { const o = x.onclick; x.onclick = (e) => { close(); o(e); }; act.appendChild(x); }); body.appendChild(act);
+      }
       card.appendChild(body);
     });
   }
